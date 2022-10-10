@@ -14,27 +14,28 @@ class SurgeryData:
     def __len__(self):
         return len(self.image_frames)
 
+    def get_frames_from_dir(self, dir):
+        top_frames = [f for f in os.listdir(dir) if self._is_top_frame(f)]
+        side_frames = [f for f in os.listdir(dir) if self._is_side_frame(f)]
+
+        top_frames = set(['_'.join(f.split('_')[:-1]) for f in top_frames])
+        side_frames = set(['_'.join(f.split('_')[:-1]) for f in side_frames])
+
+        return top_frames, side_frames
     def parse_surgery_image_frames(self):
         images_dir = os.path.join(self.surgery_dir, 'images')
+        top_frames, side_frames = self.get_frames_from_dir(images_dir)
 
-        sorted_top_frames = sorted([f for f in os.listdir(images_dir) if self._is_top_frame(f)], key=lambda x: int(x.split('_')[-2]))
-        sorted_side_frames = sorted([f for f in os.listdir(images_dir) if self._is_side_frame(f)], key=lambda x: int(x.split('_')[-2]))
-
-        top_frames = set(['_'.join(f.split('_')[:-1]) for f in sorted_top_frames])
-        side_frames = set(['_'.join(f.split('_')[:-1]) for f in sorted_side_frames])
         total_frames = set(top_frames).intersection(set(side_frames))
 
         if total_frames != top_frames or total_frames != side_frames:
             print(f"Warning: top and side frames do not match entirely for {self.surgery_dir}")
 
-        return total_frames
+        return sorted(list(total_frames), key=lambda x: int(x.split('_')[-1]))
 
     def parse_surgery_frame_labels(self):
         labels_dir = os.path.join(self.surgery_dir, 'labels')
-        top_frames = [f for f in os.listdir(labels_dir) if self._is_top_frame(f)]
-        side_frames = [f for f in os.listdir(labels_dir) if self._is_side_frame(f)]
-        top_frames = set(['_'.join(f.split('_')[:-1]) for f in top_frames])
-        side_frames = set(['_'.join(f.split('_')[:-1]) for f in side_frames])
+        top_frames, side_frames = self.get_frames_from_dir(labels_dir)
 
         all_labels = []
         last_labels = {
