@@ -31,10 +31,10 @@ class SurgeryData:
 
     def parse_surgery_frame_labels(self):
         labels_dir = os.path.join(self.surgery_dir, 'labels')
-        sorted_top_frames = sorted([f for f in os.listdir(labels_dir) if self._is_top_frame(f)], key=lambda x: int(x.split('_')[-2]))
-        sorted_side_frames = sorted([f for f in os.listdir(labels_dir) if self._is_side_frame(f)], key=lambda x: int(x.split('_')[-2]))
-        top_frames = set(['_'.join(f.split('_')[:-1]) for f in sorted_top_frames])
-        side_frames = set(['_'.join(f.split('_')[:-1]) for f in sorted_side_frames])
+        top_frames = [f for f in os.listdir(labels_dir) if self._is_top_frame(f)]
+        side_frames = [f for f in os.listdir(labels_dir) if self._is_side_frame(f)]
+        top_frames = set(['_'.join(f.split('_')[:-1]) for f in top_frames])
+        side_frames = set(['_'.join(f.split('_')[:-1]) for f in side_frames])
 
         all_labels = []
         last_labels = {
