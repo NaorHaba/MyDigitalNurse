@@ -45,7 +45,7 @@ class DualVideoDataset(Dataset):
         random.shuffle(surgeries)
         for i in range(0, len(surgeries), self.batch_size):
             self.epoch_groups_of_surgeries.append(surgeries[i:i+self.batch_size])
-        self.number_of_batches_per_group = [math.ceil(max([self.surgery_amounts[s] for s in group]) // self.frames_per_batch) for group in self.epoch_groups_of_surgeries]
+        self.number_of_batches_per_group = [math.ceil(max([self.surgery_amounts[s] for s in group]) / self.frames_per_batch) for group in self.epoch_groups_of_surgeries]
 
     def __getitem__(self, index):
         # load batch surgeries
@@ -79,7 +79,7 @@ class DualVideoDataset(Dataset):
 
         labels = []
 
-        file_list = sorted(self.surgery_data[sur].image_frames)
+        file_list = self.surgery_data[sur].image_frames
         for i in range(start, end):
             top_image_path = os.path.join(self.videos_dir, sur, 'images', file_list[i] + '_1.jpg')
             side_image_path = os.path.join(self.videos_dir, sur, 'images', file_list[i] + '_2.jpg')
