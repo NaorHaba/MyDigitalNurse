@@ -8,7 +8,7 @@ import numpy as np
 import argparse
 import random
 from link_utils import set_seed, read_surgeries,build_Graph, create_dataset
-from link_utils import Net, Net_with_embedding
+from link_utils import Net, Net_with_embedding, datasets_for_part_2
 import networkx as nx
 import torch.nn.functional as F
 import wandb
@@ -48,24 +48,24 @@ def parsing():
 
 
 class Train_next_step_pred():
-    def __init__(self,  model:Net,optimizer:torch.optim,args, embedding_dir=None):
+    def __init__(self,  model:Net,optimizer:torch.optim,full_training_dataset, val_labels,test_labels,args, embedding_dir=None):
         self.model = model
         self.optimizer=optimizer
         self.embedding_dir= embedding_dir
         self.args=args
         self.loss_calc = args.loss_calc
+        self.full_training_dataset = full_training_dataset
+        self.val_labels = val_labels
+        self.test_labels = test_labels
 
 
-    def train(self, obv_surgs:list, cur_surgs_labels:torch.tensor, num_sur_frames=5):
+    def train(self, data,labels,state_to_node):
         """
         :return:
         """
-        G, state_to_node,node_to_state = build_Graph(obv_surgs+[cur_surgs_labels[0:num_sur_frames]])
-        data = create_dataset(G=G,embedding_model=args.embedding_model,args=self.args,load_embeddings=self.embedding_dir, train_test_split=False)
         self.model.train()
-        last_node=state_to_node[tuple(x.item() for x in cur_surgs_labels[num_sur_frames-1])]
+        last_node=state_to_node[labels[0]]
         all_logits = []
-        labels = cur_surgs_labels[num_sur_frames:]
         acc=[]
         node_labels= []
         losses = []
@@ -101,10 +101,11 @@ class Train_next_step_pred():
 
 
     @torch.no_grad()
-    def test(self,obv_surgs:list, cur_surgs_labels:torch.tensor,args, num_sur_frames=5):
+    def test(self):
         self.model.eval()
         G, state_to_node,node_to_state = build_Graph(obv_surgs+[cur_surgs_labels[0:num_sur_frames]])
         data = create_dataset(G=G,embedding_model=args.embedding_model,args=args,load_embeddings=self.embedding_dir, train_test_split=False)
+        full_training_dataset = copy.deepcopy(self.full_training_dataset)
         last_node=state_to_node[tuple(x.item() for x in cur_surgs_labels[num_sur_frames-1])]
         all_logits = []
         labels = cur_surgs_labels[num_sur_frames:]
@@ -130,14 +131,14 @@ class Train_next_step_pred():
         return np.mean(losses), np.mean(acc)
 
 
-def predictions(data):
-    for i, surg in enumerate(data):
+def predictions(samples, data):
+    for i in samples:
+        dataset = data[i]['data']
+        labels = data[i]['labels']
         epoch_losses=[]
         epoch_accs = []
         print('Learning Surgery', i)
-        mean_surg_loss, mean_surg_acc = trainer.train(
-            obv_surgs=data[:i] + data[i + 1:],
-            cur_surgs_labels=surg)
+        mean_surg_loss, mean_surg_acc = trainer.train(data,labels)
         print('Current Surgery Loss: ', mean_surg_loss, 'Mean Accuracy: ', mean_surg_acc)
         epoch_losses.append(mean_surg_loss)
         epoch_accs.append(mean_surg_acc)
@@ -149,9 +150,8 @@ if __name__ == "__main__":
     set_seed(args.seed)
     wandb.init(project="MDN-IPG-P2", entity="surgical_data_science", mode=args.wandb_mode)  # logging to wandb
     wandb.config.update(args)
-    surgeries_train_data = read_surgeries(args.videos_path,'train')
-    surgeries_val_data= read_surgeries(args.videos_path,'val')
-    surgeries_test_data= read_surgeries(args.videos_path,'test')
+    train_data, full_dataset, val_labels, test_labels = datasets_for_part_2(args)
+    train_samples =list(range(20))
     model = Net_with_embedding(dataset=None,args=args) if args.embedding_model=='torch' else Net(dataset=None,args=args)
     model.load_state_dict(torch.load(os.path.join(args.files_dir,args.model)))
     optimizer = torch.optim.Adam(params=model.parameters(), lr=0.0001)
@@ -161,8 +161,8 @@ if __name__ == "__main__":
     test_data = surgeries_test_data[args.graph_worker]
     best_val_acc = best_test_acc = best_epoch = best_val_loss = best_test_loss = 0
     for epoch in range(args.num_epochs):
-        random.shuffle(train_data)
-        train_epoch_losses,train_epoch_accs=predictions(train_data)
+        random.shuffle(train_samples)
+        train_epoch_losses,train_epoch_accs=predictions(train_samples,train_data)
         print(f'Training Epoch {epoch+1} \n Mean Loss: {train_epoch_losses}, Mean Accuracy: {train_epoch_accs}')
         val_epoch_losses,val_epoch_accs=predictions(val_data,args)
         print(f'Validation Epoch {epoch+1} \n Mean Loss: {val_epoch_losses}, Mean Accuracy: {val_epoch_accs}')

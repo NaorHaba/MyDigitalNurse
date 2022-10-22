@@ -111,12 +111,12 @@ def build_Graph_from_dfs(args, train_type='Link', val_ratio=0.25, test_ratio=0.1
             all_transitions = build_Graph_from_dfs_helper(cur_surgeries,hands,state_to_node,withselfloops)
             labels = create_labels_from_surgery(surgery,hands,state_to_node,withselfloops)
             G = build_graph_from_transitions(nodes, all_transitions)
-            nx.write_gpickle(G,os.path.join(cur_path,'Graph'))
+            nx.write_gpickle(G,os.path.join(cur_path,'Graph.gpickle'))
             torch.save(labels, os.path.join(cur_path,'Labels'))
         # Creates 1 graph for all train surgeries, for testing and validation
         all_transitions = build_Graph_from_dfs_helper(train_surgeries, hands, state_to_node, withselfloops)
         G = build_graph_from_transitions(nodes, all_transitions)
-        nx.write_gpickle(G, os.path.join(save_datasets_path, 'Full_Training_Graph'))
+        nx.write_gpickle(G, os.path.join(save_datasets_path, 'Full_Training_Graph.gpickle'))
         cur_path = os.path.join(save_datasets_path, 'val')
         os.mkdir(cur_path)
         labels=[]
@@ -133,6 +133,7 @@ def build_Graph_from_dfs(args, train_type='Link', val_ratio=0.25, test_ratio=0.1
         pickle.dump(labels, f)
 
 
+
 def create_labels_from_surgery(surgery, hands,state_to_node,withselfloops):
     df = pd.read_csv(os.path.join(BORIS, surgery), skiprows=15)
     processed_df = process_boris_df(df)
@@ -143,6 +144,26 @@ def create_labels_from_surgery(surgery, hands,state_to_node,withselfloops):
         states += [state_to_node[state]] * 1 if not withselfloops else [state_to_node[state]] * int(row.FPS*row.Shift_Time)
     return torch.tensor(states)
 
+def datasets_for_part_2(args):
+    videos_path = '/data/home/liory/GCN/MyDigitalNurse/GCN/Training_datasets_part2'
+    train_data = {}
+    for i in range(20):
+        data_path = os.path.join(videos_path,f'{i}')
+        Graph = nx.read_gpickle(os.join.path(data_path,"Graph.gpickle"))
+        labels =  torch.load(os.join.path(data_path,"Labels"))
+        embedding_dir = os.path.join(args.files_dir,args.load_embeddings)
+        data = create_dataset(G=Graph, embedding_model=args.embedding_model, args=args, load_embeddings=embedding_dir,
+                       train_test_split=False)
+        train_data[i]={'data':data,'labels':labels}
+    full_graph = nx.read_gpickle(os.join.path(videos_path,"Full_Training_Graph.gpickle"))
+    full_dataset = create_dataset(G=full_graph, embedding_model=args.embedding_model, args=args, load_embeddings=embedding_dir,
+                       train_test_split=False)
+
+    f = open(f"{videos_path}/val/labels.pkl", "rb")
+    val_labels = pickle.load(f)
+    f = open(f"{videos_path}/test/labels.pkl", "rb")
+    test_labels =pickle.load(f)
+    return train_data, full_dataset,val_labels,test_labels
 
 
 def build_Graph_from_dfs_helper(surgeries, hands,state_to_node,withselfloops):
@@ -255,6 +276,7 @@ def process_boris_df(df):
                 insert_dict[f'{side}_{worker}'] = tool_id
                 new_df=new_df.append(insert_dict,ignore_index=True)
     return new_df
+
 
 
 def read_surgeries(videos_path:str, group:str='train'):
