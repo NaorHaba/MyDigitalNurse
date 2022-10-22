@@ -7,11 +7,12 @@ from torch_geometric.utils import negative_sampling
 import torch_geometric.transforms as T
 import torch_geometric.data
 from link_utils import set_seed, read_surgeries,build_Graph, create_dataset
-from link_utils import Net
+from link_utils import Net, Net_with_embedding, build_Graph_from_dfs
 import argparse
 import networkx as nx
 import copy
 import wandb
+import os
 
 ## SAGE ?
 
@@ -22,23 +23,25 @@ import wandb
 def parsing():
     parser = argparse.ArgumentParser()
     parser.add_argument('--videos_path', default='/data/shared-data/scalpel/kristina/data/detection/usage/by video')
-    parser.add_argument('--graph_worker', choices=['surgeon', 'assistant','both'], default='surgeon')
+    parser.add_argument('--graph_worker', choices=['surgeon', 'assistant','both'], default='both')
     parser.add_argument('--wandb_mode', choices=['online', 'offline', 'disabled'], default='online', type=str)
+    parser.add_argument('--Project', choices=['MDN-IPG-BORIS', 'MDN-IPG-BORIS-NoSelfLoops'], default='MDN-IPG-BORIS', type=str)
 
     parser.add_argument('--seed', default=42, type=int)
 
     ## Embedding Arguments
-    parser.add_argument('--embedding_model', choices=['Cora','DeepWalk'], default='DeepWalk')
-    parser.add_argument('--embedding_dim', default=256, type=int)
-    parser.add_argument('--embedding_walk_length', default=80, type=int)
-    parser.add_argument('--embedding_walk_number', default=20, type=int)
-    parser.add_argument('--embedding_window_size', default=5, type=int)
-    parser.add_argument('--embedding_epochs', default=10, type=int)
-    parser.add_argument('--embedding_lr', default=0.05, type=float)
+    parser.add_argument('--embedding_model', choices=['Cora','DeepWalk','torch'], default='DeepWalk')
+    parser.add_argument('--embedding_dim', default=512, type=int)
+    parser.add_argument('--embedding_walk_length', default=5, type=int)
+    parser.add_argument('--embedding_walk_number', default=5, type=int)
+    parser.add_argument('--embedding_window_size', default=2, type=int)
+    parser.add_argument('--embedding_epochs', default=5 , type=int)
+    parser.add_argument('--embedding_lr', default=0.07537842758627265, type=float)
     parser.add_argument('--embedding_min_count', default=1, type=int)
 
-    parser.add_argument('--first_conv_f', default=1024, type=float)
+    parser.add_argument('--first_conv_f', default=256 , type=int)
     parser.add_argument('--num_layers', default=5, type=int)
+    parser.add_argument('--activation', choices=['relu','lrelu','tanh','sigmoid'], default='relu')
 
     # parser.add_argument('--embedding_walks_per_node', default=20, type=int)
     # parser.add_argument('--embedding_num_negative_samples', default=10, type=int)
@@ -46,17 +49,17 @@ def parsing():
     # parser.add_argument('--embedding_q', default=1, type=int)
     # parser.add_argument('--embedding_sparse', default=True, type=bool)
 
-    parser.add_argument('--num_epochs', default=20, type=int)
-    parser.add_argument('--lr', default=0.00876569212062032, type=float)
+    parser.add_argument('--num_epochs', default=15, type=int)
+    parser.add_argument('--lr', default=0.06673482330821637, type=float)
 
     args = parser.parse_args()
     assert args.first_conv_f/2**args.num_layers>=1
     return args
 
 class Train_link_prediction():
-    def __init__(self, G:nx.DiGraph, model:Net,optimizer:torch.optim, dataset:torch_geometric.data.data.Data):
+    def __init__(self, model:Net,optimizer:torch.optim, dataset:torch_geometric.data.data.Data):
         self.model = model
-        self.G=G
+        # self.G=G
         self.data=dataset
         self.optimizer=optimizer
 
@@ -113,16 +116,20 @@ class Train_link_prediction():
 
 if __name__ == "__main__":
     args = parsing()
+    if args.embedding_model == 'Cora':
+        args.embedding_dim = 1433
     set_seed(args.seed)
-    # wandb.init(project="MDN_GCN", mode=args.wandb_mode)  # logging to wandb
-    # wandb.config.update(args)
-    surgeries_data = read_surgeries(args.videos_path,'train')
-    G, state_to_node,node_to_state = build_Graph(surgeries_data[args.graph_worker],graph_worker=args.graph_worker)
-    data = create_dataset(G,embedding_model=args.embedding_model, args=args,load_embeddings=False, train_test_split=True)
+    wandb.init(project=args.Project, entity="surgical_data_science", mode=args.wandb_mode)  # logging to wandb
+    wandb.config.update(args)
+    # surgeries_data = read_surgeries(args.videos_path,'train')
+    # G, state_to_node,node_to_state = build_Graph(surgeries_data[args.graph_worker],graph_worker=args.graph_worker,plot=False)
+    # data = create_dataset(G,embedding_model=args.embedding_model, args=args,load_embeddings=False, train_test_split=True)
+    data = build_Graph_from_dfs(args)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model, data = Net(data,args).to(device), data.to(device)
+    model = Net_with_embedding(data,args).to(device) if args.embedding_model=='torch' else Net(data,args).to(device)
+    data = data.to(device)
     optimizer = torch.optim.Adam(params=model.parameters(), lr=0.0001)
-    trainer= Train_link_prediction(G, model, optimizer,data)
+    trainer= Train_link_prediction( model, optimizer,data)
     best_val_perf = test_perf = best_epoch = 0
     train_losses, val_losses = [], []
     val_acc, test_acc = [], []
@@ -139,11 +146,13 @@ if __name__ == "__main__":
         val_acc.append(best_val_perf)
         test_acc.append(test_perf)
         train_results = {"epoch": epoch, "train loss": train_loss,
-                         "Val Loss": val_loss, 'Val Acc': val_perf, 'Test Acc':test_acc}
-        # wandb.log(train_results)
+                         "Val Loss": val_loss, 'Val Acc': val_perf, 'Test Acc':tmp_test_perf}
+        wandb.log(train_results)
         log = 'Epoch: {:03d}, Train Loss: {:.4f}, Val Loss: {:.4f}, Val Acc: {:.4f}, Test Acc: {:.4f}'
         print(log.format(epoch, train_loss, val_loss, val_perf, tmp_test_perf))
     print(f'Best Results \n Best Epoch:{best_epoch} Best Val Perf: {best_val_perf}, Best test for best val : {test_perf}')
+    wandb.log({"best epoch": best_epoch, "best val acc": best_val_perf,
+                         "best test": test_perf})
     z = trainer.model.encode()
     final_edge_index = trainer.model.decode_all(z)
-    torch.save(best_model.state_dict(), f'/home/liory/GCN/MyDigitalNurse/GCN/IPG_{args.graph_worker}')
+    torch.save(best_model.state_dict(), os.path.join(wandb.run.dir, f'IPG_{args.graph_worker}'))

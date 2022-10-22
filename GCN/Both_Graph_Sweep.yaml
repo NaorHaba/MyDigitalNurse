@@ -1,0 +1,35 @@
+program: LInkPred_part1.py
+method: bayes
+metric:
+  name: best val acc
+  goal: maximize
+parameters:
+  first_conv_f:
+    values: [64,128,256,512,1024,2048,4096,8192]
+  num_layers:
+    min: 3
+    max: 8
+  activation:
+    values: ['relu','lrelu','tanh','sigmoid']
+  lr:
+    min: 0.0001
+    max: 0.1
+  num_epochs:
+    min: 3
+    max: 25
+  embedding_model:
+    values: ['Cora','DeepWalk', 'torch']
+  embedding_dim:
+    values: [64,128,256,512]
+  embedding_walk_length:
+    values: [ 10,20,30,40,50,60,70,80,90,100]
+  embedding_walk_number:
+      values: [ 10,20,30,40,50,60,70,80,90,100 ]
+  embedding_window_size:
+    min: 2
+    max: 10
+  embedding_epochs:
+    values: [ 10,20,30,40,50,60,70,80,90,100 ]
+  embedding_lr:
+    min: 0.0001
+    max: 0.1
