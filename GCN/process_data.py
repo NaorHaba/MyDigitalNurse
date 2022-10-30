@@ -2,14 +2,14 @@ import pandas as pd
 import os
 import sys
 import argparse
-from link_utils import build_Graph_from_dfs
+from link_utils import build_Graph_from_dfs, lior_func
 
 def parsing():
     parser = argparse.ArgumentParser()
     parser.add_argument('--videos_path', default='/data/shared-data/scalpel/kristina/data/detection/usage/by video')
     parser.add_argument('--graph_worker', choices=['surgeon', 'assistant','both'], default='both')
     parser.add_argument('--wandb_mode', choices=['online', 'offline', 'disabled'], default='online', type=str)
-    parser.add_argument('--Project', choices=['MDN-IPG-BORIS', 'MDN-IPG-BORIS-NoSelfLoops'], default='MDN-IPG-BORIS', type=str)
+    parser.add_argument('--Project', choices=['MDN-IPG-BORIS', 'MDN-IPG-BORIS-NoSelfLoops'], default='MDN-IPG-BORIS-NoSelfLoops', type=str)
 
     parser.add_argument('--seed', default=42, type=int)
 
@@ -40,6 +40,9 @@ def parsing():
     assert args.first_conv_f/2**args.num_layers>=1
     return args
 
+
 if __name__=='__main__':
     args = parsing()
-    data = build_Graph_from_dfs(args, train_type = 'part2')
+    data = lior_func(args)
+    # data = build_Graph_from_dfs(args, train_type = 'part2')
+    # data

@@ -102,7 +102,10 @@ def build_Graph_from_dfs(args, train_type='Link', val_ratio=0.25, test_ratio=0.1
         dataset.test_neg_edge_index=neg_test_edge_index
         return dataset
     else:
-        save_datasets_path = '/data/home/liory/GCN/MyDigitalNurse/GCN/Training_datasets_part2'
+        if withselfloops:
+            save_datasets_path = '/data/home/liory/GCN/MyDigitalNurse/GCN/Training_datasets_part2'
+        else:
+            save_datasets_path = '/data/home/liory/GCN/MyDigitalNurse/GCN/Training_datasets_part2_NoSelfLoops'
         train_surgeries = SURGERY_GROUPS_BORIS['train']
         for i,surgery in enumerate(train_surgeries): ##Leaves 1 Surgery out, for training the network
             cur_path = os.path.join(save_datasets_path,f'{i}')
@@ -144,26 +147,35 @@ def create_labels_from_surgery(surgery, hands,state_to_node,withselfloops):
         states += [state_to_node[state]] * 1 if not withselfloops else [state_to_node[state]] * int(row.FPS*row.Shift_Time)
     return torch.tensor(states)
 
-def datasets_for_part_2(args):
-    videos_path = '/data/home/liory/GCN/MyDigitalNurse/GCN/Training_datasets_part2'
-    train_data = {}
-    for i in range(20):
-        data_path = os.path.join(videos_path,f'{i}')
-        Graph = nx.read_gpickle(os.join.path(data_path,"Graph.gpickle"))
-        labels =  torch.load(os.join.path(data_path,"Labels"))
-        embedding_dir = os.path.join(args.files_dir,args.load_embeddings)
-        data = create_dataset(G=Graph, embedding_model=args.embedding_model, args=args, load_embeddings=embedding_dir,
-                       train_test_split=False)
-        train_data[i]={'data':data,'labels':labels}
-    full_graph = nx.read_gpickle(os.join.path(videos_path,"Full_Training_Graph.gpickle"))
-    full_dataset = create_dataset(G=full_graph, embedding_model=args.embedding_model, args=args, load_embeddings=embedding_dir,
-                       train_test_split=False)
 
-    f = open(f"{videos_path}/val/labels.pkl", "rb")
+def datasets_for_part_2(args):
+    train_data = {}
+    embedding_dir = os.path.join(args.files_dir, args.load_embeddings)
+    for i in range(20):
+        data_path = os.path.join(args.videos_path,f'{i}')
+        Graph = nx.read_gpickle(os.path.join(data_path,"Graph.gpickle"))
+        labels =  torch.load(os.path.join(data_path,"Labels"))
+        data = create_dataset(G=Graph, args=args, load_embeddings=embedding_dir)
+        data.weight = data.weight.to(torch.float32)
+        train_data[i]={'data':data,'labels':labels}
+    full_graph = nx.read_gpickle(os.path.join(args.videos_path,"Full_Training_Graph.gpickle"))
+    full_dataset = create_dataset(G=full_graph, args=args, load_embeddings=embedding_dir)
+    full_dataset.weight = full_dataset.weight.to(torch.float32)
+    f = open(f"{args.videos_path}/val/labels.pkl", "rb")
     val_labels = pickle.load(f)
-    f = open(f"{videos_path}/test/labels.pkl", "rb")
+    f = open(f"{args.videos_path}/test/labels.pkl", "rb")
     test_labels =pickle.load(f)
     return train_data, full_dataset,val_labels,test_labels
+    # return full_dataset,val_labels,test_labels
+
+
+def read_train_data(i,args):
+    data_path = os.path.join(args.videos_path, f'{i}')
+    Graph = nx.read_gpickle(os.path.join(data_path, "Graph.gpickle"))
+    labels = torch.load(os.path.join(data_path, "Labels"))
+    embedding_dir = os.path.join(args.files_dir, args.load_embeddings)
+    data = create_dataset(G=Graph, args=args, load_embeddings=embedding_dir)
+    return data,labels
 
 
 def build_Graph_from_dfs_helper(surgeries, hands,state_to_node,withselfloops):
@@ -250,6 +262,14 @@ def get_info_from_label(label):
         tool_id = label[-1]
     return worker, side, tool_id
 
+def lior_func(args):
+    sur = SURGERY_GROUPS_BORIS['train'][19]
+    hands = HANDS[args.graph_worker]
+    tuple_len = len(hands)
+    f = open(f"state_to_node_{tuple_len}.pkl", "rb")
+    state_to_node=pickle.load(f)
+    labels = create_labels_from_surgery(sur,hands,state_to_node,False)
+
 
 def process_boris_df(df):
     index=0
@@ -267,6 +287,7 @@ def process_boris_df(df):
             time_diff = row.Time - insert_dict['Time']
             if time_diff==0:
                 new_df.at[index-1, f'{side}_{worker}'] = tool_id
+                insert_dict[f'{side}_{worker}'] = tool_id
                 index-=1
             else:
                 insert_dict['Index']=index
@@ -389,13 +410,28 @@ class Net(torch.nn.Module):
                 net.append(activation())
         self.net= torch.nn.Sequential(*net)
 
+    def encode_p2_noselfloops(self,x=None,edge_index=None, last_step=None):
+        if x is None and edge_index is None:
+            x=self.dataset.x
+            x=x.long()
+            edge_index = self.dataset.train_pos_edge_index
+            weight = self.dataset.train_weight.to(torch.float32)
+        for i,layer in enumerate(self.net)[:-1]:
+            if (i-1)%3==0:
+                x= layer(x,edge_index, weight)
+                x=x.to(torch.float32)
+            else:
+                x= layer(x)
+        return(x)
 
-    def encode(self, x=None,edge_index=None, weight=None):
+    def encode(self, x=None,edge_index=None, weight=None, last_step=None):
         if x is None and edge_index is None:
             x=self.dataset.x
             edge_index = self.dataset.train_pos_edge_index
             weight = self.dataset.train_weight.to(torch.float32)
-        for i,layer in enumerate(self.net):
+        else:
+            weight= weight.to(torch.float32)
+        for i,layer in enumerate(self.net[:-1]):
             if i%3==0:
                 x= layer(x,edge_index, weight)
                 x=x.to(torch.float32)
@@ -418,10 +454,13 @@ class Net(torch.nn.Module):
         prob_adj = z @ z.t()
         return (prob_adj > 0).nonzero(as_tuple=False).t()
 
-    def predict(self, z,last_step):
+    def predict(self, z,last_step, selfloops=True):
         prob_adj = z @ z.t()
         rel_edges = prob_adj[last_step][:]
-        return torch.argmax(rel_edges).item(), rel_edges
+        if selfloops is False:
+            rel_edges[last_step] = np.float('-inf')
+        pred = torch.argmax(rel_edges).item()
+        return pred, rel_edges
 
 
 class Net_with_embedding(torch.nn.Module):
@@ -446,6 +485,7 @@ class Net_with_embedding(torch.nn.Module):
             if i<args.num_layers-1:
                 net.append(activation())
         self.net= torch.nn.Sequential(*net)
+
 
 
     def encode(self, x=None,edge_index=None):
@@ -477,5 +517,20 @@ class Net_with_embedding(torch.nn.Module):
         rel_edges = prob_adj[last_step][:]
         return torch.argmax(rel_edges).item(), rel_edges
 
+# sources = dataset.edge_index[0,:]
+# source_bool=torch.isin(sources, torch.tensor(last_node))
+# source_bool,_ = torch.where(torch.isin(sources, torch.tensor(last_node))==True)
+# targets = dataset.edge_index[1,:]
+# target_bool=torch.isin(targets, torch.tensor(last_node))
+# target_bool,_ = torch.where(target_bool==True)
 
-
+def find_edge_idx(edge_index, source,target):
+    sources = edge_index[0,:]
+    source_bool= torch.where(torch.isin(sources, torch.tensor(source))==True)[0]
+    targets = edge_index[1,:][source_bool]
+    target_index = torch.where(torch.isin(targets, torch.tensor(target))==True)[0]
+    if target_index.shape[0]==1:
+        cur_edge_index = source_bool[target_index]
+        return cur_edge_index
+    else:
+        return -1

@@ -127,6 +127,7 @@ if __name__ == "__main__":
     data = build_Graph_from_dfs(args)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = Net_with_embedding(data,args).to(device) if args.embedding_model=='torch' else Net(data,args).to(device)
+    print(model)
     data = data.to(device)
     optimizer = torch.optim.Adam(params=model.parameters(), lr=0.0001)
     trainer= Train_link_prediction( model, optimizer,data)
