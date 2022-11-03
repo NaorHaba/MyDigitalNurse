@@ -278,12 +278,14 @@ def process_boris_df(df, graph_worker):
     index=0
     first_state = 4 if graph_worker=='both' else 2
     insert_dict = {'Index':index,'Time':0,'Time_Diff':0,'R_surgeon':0,'L_surgeon':0,'R_assistant':0,'L_assistant':0,'FPS':30}
-    new_df = pd.DataFrame(insert_dict,index=[0])
     df = df[['Time', 'FPS', 'Behavior', 'Status']][df.Status == 'START']
     if graph_worker=='surgeon':
         df = df[(~df.Behavior.str.contains('L2'))&(~df.Behavior.str.contains('R2'))]
+        insert_dict = {'Index': index, 'Time': 0, 'Time_Diff': 0, 'R_surgeon': 0, 'L_surgeon': 0, 'FPS': 30}
     elif graph_worker=='assistant':
         df = df[(df.Behavior.str.contains('L2'))|(df.Behavior.str.contains('R2'))]
+        insert_dict = {'Index': index, 'Time': 0, 'Time_Diff': 0, 'R_assistant':0,'L_assistant':0, 'FPS': 30}
+    new_df = pd.DataFrame(insert_dict,index=[0])
     df = df.reset_index()
     for i, row in df.iterrows():
         worker, side, tool_id = get_info_from_label(row.Behavior)
