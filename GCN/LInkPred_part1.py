@@ -23,9 +23,9 @@ import os
 def parsing():
     parser = argparse.ArgumentParser()
     parser.add_argument('--videos_path', default='/data/shared-data/scalpel/kristina/data/detection/usage/by video')
-    parser.add_argument('--graph_worker', choices=['surgeon', 'assistant','both'], default='both')
+    parser.add_argument('--graph_worker', choices=['surgeon', 'assistant','both'], default='surgeon')
     parser.add_argument('--wandb_mode', choices=['online', 'offline', 'disabled'], default='online', type=str)
-    parser.add_argument('--Project', choices=['MDN-IPG-BORIS', 'MDN-IPG-BORIS-NoSelfLoops'], default='MDN-IPG-BORIS', type=str)
+    parser.add_argument('--Project', choices=['MDN-IPG-BORIS', 'MDN-IPG-BORIS-NoSelfLoops'], default='MDN-IPG-BORIS-NoSelfLoops', type=str)
 
     parser.add_argument('--seed', default=42, type=int)
 
@@ -119,7 +119,7 @@ if __name__ == "__main__":
     if args.embedding_model == 'Cora':
         args.embedding_dim = 1433
     set_seed(args.seed)
-    wandb.init(project=args.Project, entity="surgical_data_science", mode=args.wandb_mode)  # logging to wandb
+    wandb.init(project=f'{args.Project}_{args.graph_worker}', entity="surgical_data_science", mode=args.wandb_mode)  # logging to wandb
     wandb.config.update(args)
     # surgeries_data = read_surgeries(args.videos_path,'train')
     # G, state_to_node,node_to_state = build_Graph(surgeries_data[args.graph_worker],graph_worker=args.graph_worker,plot=False)

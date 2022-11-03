@@ -43,6 +43,5 @@ def parsing():
 
 if __name__=='__main__':
     args = parsing()
-    data = lior_func(args)
-    # data = build_Graph_from_dfs(args, train_type = 'part2')
+    data = build_Graph_from_dfs(args, train_type = 'part2')
     # data

@@ -22,7 +22,7 @@ import pandas as pd
 import random
 
 ACTIVATIONS = {'relu': torch.nn.ReLU, 'lrelu': torch.nn.LeakyReLU, 'tanh': torch.nn.Tanh, 'sigmoid':torch.nn.Sigmoid}
-BORIS = "/data/shared-data/scalpel/kristina/data/boris/boris big_gt/"
+BORIS = "/strg/C/shared-data/ACS_2019_data/boris/boris_big_gt"
 
 
 SURGERY_GROUPS_BORIS = {
@@ -68,7 +68,7 @@ def build_Graph_from_dfs(args, train_type='Link', val_ratio=0.25, test_ratio=0.1
     nodes = list(node_to_state.keys())
     if train_type == 'Link':
         surgeries = SURGERY_GROUPS_BORIS['train']
-        all_transitions = build_Graph_from_dfs_helper(surgeries, hands,state_to_node,withselfloops)
+        all_transitions = build_Graph_from_dfs_helper(surgeries, hands,state_to_node,withselfloops, args.graph_worker)
         train_ratio = 1 - val_ratio - test_ratio
         edges = list(all_transitions.keys())
         num_edges = len(edges)
@@ -103,21 +103,22 @@ def build_Graph_from_dfs(args, train_type='Link', val_ratio=0.25, test_ratio=0.1
         return dataset
     else:
         if withselfloops:
-            save_datasets_path = '/data/home/liory/GCN/MyDigitalNurse/GCN/Training_datasets_part2'
+            save_datasets_path = '/data/home/liory/MyDigitalNurse/GCN/Training_datasets_part2'
         else:
-            save_datasets_path = '/data/home/liory/GCN/MyDigitalNurse/GCN/Training_datasets_part2_NoSelfLoops'
+            save_datasets_path = '/data/home/liory/MyDigitalNurse/GCN/Training_datasets_part2_NoSelfLoops'
         train_surgeries = SURGERY_GROUPS_BORIS['train']
+        os.mkdir(save_datasets_path)
         for i,surgery in enumerate(train_surgeries): ##Leaves 1 Surgery out, for training the network
             cur_path = os.path.join(save_datasets_path,f'{i}')
             os.mkdir(cur_path)
             cur_surgeries =train_surgeries[:i]+train_surgeries[i+1:]
-            all_transitions = build_Graph_from_dfs_helper(cur_surgeries,hands,state_to_node,withselfloops)
+            all_transitions = build_Graph_from_dfs_helper(cur_surgeries,hands,state_to_node,withselfloops,args.graph_worker)
             labels = create_labels_from_surgery(surgery,hands,state_to_node,withselfloops)
             G = build_graph_from_transitions(nodes, all_transitions)
             nx.write_gpickle(G,os.path.join(cur_path,'Graph.gpickle'))
             torch.save(labels, os.path.join(cur_path,'Labels'))
         # Creates 1 graph for all train surgeries, for testing and validation
-        all_transitions = build_Graph_from_dfs_helper(train_surgeries, hands, state_to_node, withselfloops)
+        all_transitions = build_Graph_from_dfs_helper(train_surgeries, hands, state_to_node, withselfloops,args.graph_worker)
         G = build_graph_from_transitions(nodes, all_transitions)
         nx.write_gpickle(G, os.path.join(save_datasets_path, 'Full_Training_Graph.gpickle'))
         cur_path = os.path.join(save_datasets_path, 'val')
@@ -178,16 +179,18 @@ def read_train_data(i,args):
     return data,labels
 
 
-def build_Graph_from_dfs_helper(surgeries, hands,state_to_node,withselfloops):
+def build_Graph_from_dfs_helper(surgeries, hands,state_to_node,withselfloops,graph_worker):
     transitions = {}
     for sur in surgeries:
         df = pd.read_csv(os.path.join(BORIS,sur), skiprows=15)
-        processed_df = process_boris_df(df)
+        processed_df = process_boris_df(df,graph_worker)
         for i_stage in range(len(processed_df)-1):
             source_row = processed_df.loc[i_stage]
             target_row = processed_df.loc[i_stage+1]
             source = tuple(int(source_row[x].item()) for x in hands)
             target = tuple(int(target_row[x].item()) for x in hands)
+            if source==target:
+                print('P')
             key = (state_to_node[source], state_to_node[target])
             if key in transitions.keys():
                 transitions[key] += 1
@@ -270,16 +273,22 @@ def lior_func(args):
     state_to_node=pickle.load(f)
     labels = create_labels_from_surgery(sur,hands,state_to_node,False)
 
-
-def process_boris_df(df):
+#TODO
+def process_boris_df(df, graph_worker):
     index=0
+    first_state = 4 if graph_worker=='both' else 2
     insert_dict = {'Index':index,'Time':0,'Time_Diff':0,'R_surgeon':0,'L_surgeon':0,'R_assistant':0,'L_assistant':0,'FPS':30}
     new_df = pd.DataFrame(insert_dict,index=[0])
     df = df[['Time', 'FPS', 'Behavior', 'Status']][df.Status == 'START']
+    if graph_worker=='surgeon':
+        df = df[(~df.Behavior.str.contains('L2'))&(~df.Behavior.str.contains('R2'))]
+    elif graph_worker=='assistant':
+        df = df[(df.Behavior.str.contains('L2'))|(df.Behavior.str.contains('R2'))]
+    df = df.reset_index()
     for i, row in df.iterrows():
         worker, side, tool_id = get_info_from_label(row.Behavior)
         tool_id = int(tool_id)
-        if i<4:
+        if i<first_state:
             if tool_id!=0:
                 new_df.at[0, f'{side}_{worker}'] = tool_id
         else:
@@ -454,10 +463,10 @@ class Net(torch.nn.Module):
         prob_adj = z @ z.t()
         return (prob_adj > 0).nonzero(as_tuple=False).t()
 
-    def predict(self, z,last_step, selfloops=True):
+    def predict(self, z,last_step, removeselfloops=False):
         prob_adj = z @ z.t()
         rel_edges = prob_adj[last_step][:]
-        if selfloops is False:
+        if removeselfloops:
             rel_edges[last_step] = np.float('-inf')
         pred = torch.argmax(rel_edges).item()
         return pred, rel_edges

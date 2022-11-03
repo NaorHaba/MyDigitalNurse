@@ -17,6 +17,8 @@ import time
 import warnings
 warnings.filterwarnings("ignore")
 
+
+
 def set_seed(seed=42):
     random.seed(seed)
     np.random.seed(seed)
@@ -26,31 +28,35 @@ def set_seed(seed=42):
 
 def parsing():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--videos_path', default='/data/home/liory/GCN/MyDigitalNurse/GCN/Training_datasets_part2_NoSelfLoops')
+    parser.add_argument('--videos_path', default='/data/home/liory/MyDigitalNurse/GCN/Training_datasets_part2_NoSelfLoops')
     parser.add_argument('--seed', default=42, type=int)
     parser.add_argument('--wandb_mode', choices=['online', 'offline', 'disabled'], default='online', type=str)
-    parser.add_argument('--Project', choices=['MDN-NextStep-BORIS', 'MDN-NextStep-BORIS-NoSelfLoops'], default='MDN-NextStep-BORIS-NoSelfLoops', type=str)
+    parser.add_argument('--Project', default='MDN-NextStep-BORIS_new', type=str)
 
     parser.add_argument('--graph_worker', choices=['surgeon', 'assistant','both'], default='both')
+    parser.add_argument('--p1_model_type', choices=['MDN-IPG-BORIS', 'MDN-IPG-BORIS-NoSelfLoops'], default='MDN-IPG-BORIS')
+    parser.add_argument('--train_type', choices=['ForcedNoSelfLoops', 'NoSelfLoops','FullGraph'], default='ForcedNoSelfLoops')
     parser.add_argument('--loss_calc', choices=['surgery', 'node', 'batch'], default='surgery')
     parser.add_argument('--batch_size', default=128, type=int)
-    # parser.add_argument('--files_dir', default='/data/home/liory/GCN/MyDigitalNurse/GCN/wandb/run-20221023_085939-wid8ih2u/files')
-    # devout-sweep-453
-    # --activation = tanh -embedding_dim = 256  -embedding_model = DeepWalk  -first_conv_f = 64 -- -num_layers = 3
-    parser.add_argument('--files_dir', default='/data/home/liory/GCN/MyDigitalNurse/GCN/wandb/run-20221022_124019-atyndn4j/files') #With self loops
-    #
-    # --activation = tanh -embedding_dim = 256  -embedding_model = DeepWalk  -first_conv_f = 4096 -- -num_layers = 8
+
+    parser.add_argument('--files_dir', type=str, default='/data/home/liory/MyDigitalNurse/GCN/wandb/run-20221101_030559-wdhc61fr/files/')
+
+    # surgical_data_science / MDN - IPG - BORIS / wdhc61fr
+    # -activation = sigmoid - -embedding_dim = 512 - -embedding_model = DeepWalk --first_conv_f = 2048 -lr = 0.03251450489936859 - -num_layers = 8
+    # parser.add_argument('--files_dir', type=str, default='/data/home/liory/MyDigitalNurse/GCN/wandb/run-20221101_165943-kkzu6eym/files/')
+    # surgical_data_science / MDN - IPG - BORIS - NoSelfLoops / kkzu6eym
+    # -activation = relu - -embedding_dim = 64 --embedding_model = DeepWalk - first_conv_f = 256 - -lr = 0.07015520323332608 - -num_epochs = 24 - -num_layers = 7
 
     parser.add_argument('--model', default='IPG_both' )
-    parser.add_argument('--first_conv_f', default=4096 , type=int)
+    parser.add_argument('--first_conv_f', default=2048 , type=int)
     parser.add_argument('--num_layers', default=8, type=int)
-    parser.add_argument('--activation', choices=['relu','lrelu','tanh','sigmoid'], default='tanh')
+    parser.add_argument('--activation', choices=['relu','lrelu','tanh','sigmoid'], default='sigmoid')
     parser.add_argument('--load_embeddings', default='train_embeddings_both.pkl' )
     parser.add_argument('--embedding_model', choices=['Cora','DeepWalk','torch'], default='DeepWalk')
-    parser.add_argument('--embedding_dim', default=256, type=int)
+    parser.add_argument('--embedding_dim', default=512, type=int)
 
     parser.add_argument('--num_epochs', default=20, type=int)
-    parser.add_argument('--lr', default=0.08427977033491187, type=float)
+    parser.add_argument('--lr', default=0.07015520323332608, type=float)
     args = parser.parse_args()
     assert args.first_conv_f/2**args.num_layers>=1
     return args
@@ -68,6 +74,7 @@ class Train_next_step_pred():
         self.labels = {'val': val_labels, 'test': test_labels}
         self.videos_path = args.videos_path
         self.embedding_dir = os.path.join(args.files_dir, args.load_embeddings)
+        self.remove = True if 'Forced' in args.train_type else False
 
     def train_frames_batch(self, data,labels):
         self.model.train()
@@ -82,7 +89,7 @@ class Train_next_step_pred():
             all_logits=[]
             for node in cur_labels:
                 z = self.model.encode(x=data.x, edge_index=data.edge_index, weight=data.weight)
-                prediction, logits=self.model.predict(z,last_node,selfloops=False)
+                prediction, logits=self.model.predict(z,last_node,removeselfloops=self.remove)
                 all_logits.append(logits)
                 node_labels.append(node)
                 acc.append(prediction==node.item())
@@ -111,7 +118,7 @@ class Train_next_step_pred():
         self.optimizer.zero_grad()
         for node in labels[1:]:
             z = self.model.encode(x=data.x, edge_index=data.edge_index, weight=data.weight)
-            prediction, logits=self.model.predict(z,last_node,selfloops=False)
+            prediction, logits=self.model.predict(z,last_node,removeselfloops=self.remove)
             all_logits.append(logits)
             node_labels.append(node)
             acc.append(prediction==node.item())
@@ -141,7 +148,7 @@ class Train_next_step_pred():
         losses = []
         for node in labels[1:]:
             z = self.model.encode(x=data.x, edge_index=data.edge_index, weight=data.weight)
-            prediction, logits=self.model.predict(z,last_node,selfloops=False)
+            prediction, logits=self.model.predict(z,last_node,removeselfloops=self.remove)
             node_labels.append(node)
             acc.append(prediction==node.item())
             cur_edge_index = find_edge_idx(data.edge_index, last_node, node)
@@ -175,7 +182,7 @@ class Train_next_step_pred():
         for node in labels[1:]:
             all_logits = []
             z = self.model.encode(x=data.x, edge_index=data.edge_index, weight=data.weight)
-            prediction, logits=self.model.predict(z,last_node,selfloops=False)
+            prediction, logits=self.model.predict(z,last_node,removeselfloops=self.remove)
             all_logits.append(logits)
             node_labels.append(node)
             acc.append(prediction==node.item())
@@ -233,7 +240,7 @@ class Train_next_step_pred():
                     for node in cur_labels:
                         z = self.model.encode(x=full_training_dataset.x, edge_index=full_training_dataset.edge_index,
                                               weight=full_training_dataset.weight)
-                        prediction, logits=self.model.predict(z,last_node,selfloops=False)
+                        prediction, logits=self.model.predict(z,last_node,removeselfloops=self.remove)
                         all_logits.append(logits)
                         node_labels.append(node)
                         accs.append(prediction==node)
@@ -268,7 +275,7 @@ class Train_next_step_pred():
                 for node in labels:
                     z = self.model.encode(x=full_training_dataset.x, edge_index=full_training_dataset.edge_index,
                                           weight=full_training_dataset.weight)
-                    prediction, logits=self.model.predict(z,last_node,selfloops=False)
+                    prediction, logits=self.model.predict(z,last_node,removeselfloops=self.remove)
                     all_logits.append(logits)
                     node_labels.append(node)
                     accs.append(prediction==node)
@@ -328,6 +335,10 @@ class Train_next_step_pred():
 if __name__ == "__main__":
     args = parsing()
     set_seed(args.seed)
+    if 'NoSelfLoops' in args.train_type:
+        args.videos_path = '/data/home/liory/MyDigitalNurse/GCN/Training_datasets_part2_NoSelfLoops'
+    else:
+        args.videos_path = '/data/home/liory/MyDigitalNurse/GCN/Training_datasets_part2'
     wandb.init(project=args.Project, entity="surgical_data_science", mode=args.wandb_mode)  # logging to wandb
     wandb.config.update(args)
     train_data, full_dataset, val_labels, test_labels = datasets_for_part_2(args)
