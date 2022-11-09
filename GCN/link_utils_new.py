@@ -2,9 +2,7 @@ import sys
 import torch
 import os
 import itertools
-sys.path.insert(0, f'{"/".join((os.getcwd()).split("/")[:-1])}/classifier')
-from surgery_data import SurgeryData
-from utils import SURGERY_GROUPS
+
 import networkx as nx
 import matplotlib.pyplot as plt
 from torch_geometric.utils import from_networkx, negative_sampling
@@ -52,8 +50,8 @@ def save_mappings(n_workers = 2):
     f = open(f"node_to_state_{n_workers}.pkl", "wb")
     pickle.dump(node_to_state, f)
 
-#
-def build_Graph_from_dfs(args, train_type='Link', val_ratio=0.25, test_ratio=0.1):
+
+def build_Graph_from_dfs_new(args, train_type='Link', val_ratio=0.25, test_ratio=0.1):
     '''
     :param surgeries: list of surgery tensors of shape Num_Frames,num_hands
     :return: Graph reoresentation of all surgeries
@@ -61,16 +59,18 @@ def build_Graph_from_dfs(args, train_type='Link', val_ratio=0.25, test_ratio=0.1
     withselfloops = False if 'NoSelfLoops' in args.Project else True
     hands = HANDS[args.graph_worker]
     tuple_len = len(hands)
-    f = open(f"state_to_node_{tuple_len}.pkl", "rb")
+    f = open(f"state_to_node_{args.graph_worker}_new.pkl", "rb")
     state_to_node=pickle.load(f)
-    f = open(f"node_to_state_{tuple_len}.pkl", "rb")
+    f = open(f"node_to_state_{args.graph_worker}_new.pkl", "rb")
     node_to_state=pickle.load(f)
     nodes = list(node_to_state.keys())
     if train_type == 'Link':
-        surgeries = SURGERY_GROUPS_BORIS['train']
-        all_transitions = build_Graph_from_dfs_helper(surgeries, hands,state_to_node,withselfloops, args.graph_worker)
+        surgeries = SURGERY_GROUPS_BORIS['train']+SURGERY_GROUPS_BORIS['val']+SURGERY_GROUPS_BORIS['test']
+        all_transitions,all_nodes = build_Graph_from_dfs_helper(surgeries, hands,state_to_node,withselfloops, args.graph_worker)
         train_ratio = 1 - val_ratio - test_ratio
         edges = list(all_transitions.keys())
+        set_seed()
+        random.shuffle(edges)
         num_edges = len(edges)
         train_edges = edges[:int(train_ratio * num_edges)]
         val_edges = edges[int(train_ratio * num_edges):int((train_ratio + val_ratio) * num_edges)]
@@ -78,14 +78,16 @@ def build_Graph_from_dfs(args, train_type='Link', val_ratio=0.25, test_ratio=0.1
         G_train = build_graph_from_transitions(nodes,all_transitions,train_edges)
         G_val = build_graph_from_transitions(nodes,all_transitions,val_edges)
         G_test = build_graph_from_transitions(nodes,all_transitions,test_edges)
+        G_full = build_graph_from_transitions(nodes,all_transitions,edges)
+        G_full_data = from_networkx(G_full)
         dataset= create_dataset(G_train,args=args)
         val_data = from_networkx(G_val)
         neg_val_edge_index = negative_sampling(
-            edge_index=val_data.edge_index, num_nodes=val_data.num_nodes,
+            edge_index=G_full_data.edge_index, num_nodes=val_data.num_nodes,
             num_neg_samples=val_data.edge_index.size(1)) #Negative
         test_data = from_networkx(G_test)
         neg_test_edge_index = negative_sampling(
-            edge_index=test_data.edge_index, num_nodes=test_data.num_nodes,
+            edge_index=G_full_data.edge_index, num_nodes=test_data.num_nodes,
             num_neg_samples=test_data.edge_index.size(1)) #
         dataset.train_pos_edge_index=dataset.edge_index
         if withselfloops:
@@ -100,13 +102,12 @@ def build_Graph_from_dfs(args, train_type='Link', val_ratio=0.25, test_ratio=0.1
         dataset.val_neg_edge_index=neg_val_edge_index
         dataset.test_pos_edge_index=test_data.edge_index
         dataset.test_neg_edge_index=neg_test_edge_index
-        return dataset
+        return dataset, G_full_data.edge_index
     else:
-        train_data_dict ={}
         if withselfloops:
             save_datasets_path = f'/data/home/liory/MyDigitalNurse/GCN/Training_datasets_part2_{args.graph_worker}_new'
         else:
-            save_datasets_path = f'/data/home/liory/MyDigitalNurse/GCN/Training_datasets_part2_NoSelfLoops_{args.graph_worker}'
+            save_datasets_path = f'/data/home/liory/MyDigitalNurse/GCN/Training_datasets_part2_NoSelfLoops_{args.graph_worker}_new'
         train_surgeries = SURGERY_GROUPS_BORIS['train']
         if train_type=='p2':
             os.mkdir(save_datasets_path)
@@ -115,13 +116,13 @@ def build_Graph_from_dfs(args, train_type='Link', val_ratio=0.25, test_ratio=0.1
             if train_type == 'p2':
                 os.mkdir(cur_path)
             cur_surgeries =train_surgeries[:i]+train_surgeries[i+1:]
-            all_transitions = build_Graph_from_dfs_helper(cur_surgeries,hands,state_to_node,withselfloops,args.graph_worker)
+            all_transitions, all_nodes = build_Graph_from_dfs_helper(cur_surgeries,hands,state_to_node,withselfloops,args.graph_worker)
             labels,weights = create_labels_from_surgery(surgery,hands,state_to_node,withselfloops, args.graph_worker)
-            G = build_graph_from_transitions(nodes, all_transitions)
+            G = build_graph_from_transitions(all_nodes, all_transitions)
             if train_type=='check_graphs':
                 sample_transitions = build_Graph_from_dfs_helper([surgery],hands,state_to_node,withselfloops,args.graph_worker)
                 sample_graph = build_graph_from_transitions(nodes, sample_transitions)
-                train_data_dict[i]={'Graph':G,'sample_graph':sample_graph}
+                # train_data_dict[i]={'Graph':G,'sample_graph':sample_graph}
             if train_type == 'p2':
                 nx.write_gpickle(G,os.path.join(cur_path,'Graph.gpickle'))
                 torch.save(labels, os.path.join(cur_path,'Labels'))
@@ -130,42 +131,41 @@ def build_Graph_from_dfs(args, train_type='Link', val_ratio=0.25, test_ratio=0.1
         # Creates 1 graph for all train surgeries, for testing and validation
         all_transitions = build_Graph_from_dfs_helper(train_surgeries, hands, state_to_node, withselfloops,args.graph_worker)
         G = build_graph_from_transitions(nodes, all_transitions)
-        print(nodes)
-        print(all_transitions)
-        train_data_dict['full_train'] = G
-        if train_type=='p2':
-            nx.write_gpickle(G, os.path.join(save_datasets_path, 'Full_Training_Graph.gpickle'))
-            cur_path = os.path.join(save_datasets_path, 'val')
-            os.mkdir(cur_path)
-            labels=[]
-            weights = []
-            for surgery in SURGERY_GROUPS_BORIS['val']:
-                sur_labels, sur_weights = create_labels_from_surgery(surgery,hands,state_to_node,withselfloops,args.graph_worker)
-                labels.append(sur_labels)
-                if len(sur_weights)>0:
-                    weights.append(sur_weights)
-                # labels.append(create_labels_from_surgery(surgery,hands,state_to_node,withselfloops,args.graph_worker))
-            f = open(os.path.join(cur_path, 'labels.pkl'), "wb")
-            pickle.dump(labels, f)
-            f = open(os.path.join(cur_path, 'weights.pkl'), "wb")
-            pickle.dump(weights, f)
-            cur_path = os.path.join(save_datasets_path, 'test')
-            os.mkdir(cur_path)
-            labels = []
-            weights = []
-            for surgery in SURGERY_GROUPS_BORIS['test']:
-                sur_labels, sur_weights = create_labels_from_surgery(surgery,hands,state_to_node,withselfloops,args.graph_worker)
-                labels.append(sur_labels)
-                if len(sur_weights)>0:
-                    weights.append(sur_weights)
-                # labels.append(create_labels_from_surgery(surgery,hands,state_to_node,withselfloops,args.graph_worker))
-            f = open(os.path.join(cur_path, 'labels.pkl'), "wb")
-            pickle.dump(labels, f)
-            f = open(os.path.join(cur_path, 'weights.pkl'), "wb")
-            pickle.dump(weights, f)
-        if train_type=='check_graphs':
-            return train_data_dict
-
+    #     print(nodes)
+    #     print(all_transitions)
+    #     train_data_dict['full_train'] = G
+    #     if train_type=='p2':
+    #         nx.write_gpickle(G, os.path.join(save_datasets_path, 'Full_Training_Graph.gpickle'))
+    #         cur_path = os.path.join(save_datasets_path, 'val')
+    #         os.mkdir(cur_path)
+    #         labels=[]
+    #         weights = []
+    #         for surgery in SURGERY_GROUPS_BORIS['val']:
+    #             sur_labels, sur_weights = create_labels_from_surgery(surgery,hands,state_to_node,withselfloops,args.graph_worker)
+    #             labels.append(sur_labels)
+    #             if len(sur_weights)>0:
+    #                 weights.append(sur_weights)
+    #             # labels.append(create_labels_from_surgery(surgery,hands,state_to_node,withselfloops,args.graph_worker))
+    #         f = open(os.path.join(cur_path, 'labels.pkl'), "wb")
+    #         pickle.dump(labels, f)
+    #         f = open(os.path.join(cur_path, 'weights.pkl'), "wb")
+    #         pickle.dump(weights, f)
+    #         cur_path = os.path.join(save_datasets_path, 'test')
+    #         os.mkdir(cur_path)
+    #         labels = []
+    #         weights = []
+    #         for surgery in SURGERY_GROUPS_BORIS['test']:
+    #             sur_labels, sur_weights = create_labels_from_surgery(surgery,hands,state_to_node,withselfloops,args.graph_worker)
+    #             labels.append(sur_labels)
+    #             if len(sur_weights)>0:
+    #                 weights.append(sur_weights)
+    #             # labels.append(create_labels_from_surgery(surgery,hands,state_to_node,withselfloops,args.graph_worker))
+    #         f = open(os.path.join(cur_path, 'labels.pkl'), "wb")
+    #         pickle.dump(labels, f)
+    #         f = open(os.path.join(cur_path, 'weights.pkl'), "wb")
+    #         pickle.dump(weights, f)
+    #     if train_type=='check_graphs':
+    #         return train_data_dict
 
 
 def create_labels_from_surgery(surgery, hands,state_to_node,withselfloops, graph_worker):
@@ -182,31 +182,6 @@ def create_labels_from_surgery(surgery, hands,state_to_node,withselfloops, graph
     return torch.tensor(states), torch.tensor(weights)
 
 
-def datasets_for_part_2(args,g,l):
-    train_data = {}
-    embedding_dir = os.path.join(args.files_dir, args.load_embeddings)
-    val_weights = test_weights = None
-    for i in range(20):
-        data_path = os.path.join(args.videos_path,f'{i}')
-        Graph = nx.read_gpickle(os.path.join(os.path.join(g,f'{i}'),"Graph.gpickle"))
-        labels =  torch.load(os.path.join(os.path.join(l,f'{i}'),"Labels"))
-        labels_weight =torch.load(os.path.join(os.path.join(l,f'{i}'),"Weights"))
-        data = create_dataset(G=Graph, args=args, load_embeddings=embedding_dir)
-        data.weight = data.weight.to(torch.float32)
-        train_data[i]={'data':data,'labels':labels, 'labels_weight':labels_weight}
-    full_graph = nx.read_gpickle(os.path.join(args.videos_path,"Full_Training_Graph.gpickle"))
-    full_dataset = create_dataset(G=full_graph, args=args, load_embeddings=embedding_dir)
-    full_dataset.weight = full_dataset.weight.to(torch.float32)
-    f = open(f"{args.videos_path}/val/labels.pkl", "rb")
-    val_labels = pickle.load(f)
-    # f = open(f"{args.videos_path}/val/weights.pkl", "rb")
-    # val_weights = pickle.load(f)
-    f = open(f"{args.videos_path}/test/labels.pkl", "rb")
-    test_labels =pickle.load(f)
-    # f = open(f"{args.videos_path}/test/weights.pkl", "rb")
-    # test_weights =pickle.load(f)
-    return train_data, full_dataset,val_labels,test_labels
-    # return full_dataset,val_labels,test_labels
 
 def datasets_for_part_2_overfitcheck(args,g,l):
     train_data = {}
@@ -234,6 +209,7 @@ def read_train_data(i,args):
 
 def build_Graph_from_dfs_helper(surgeries, hands,state_to_node,withselfloops,graph_worker):
     transitions = {}
+    nodes = []
     for sur in surgeries:
         df = pd.read_csv(os.path.join(BORIS,sur), skiprows=15)
         processed_df = process_boris_df(df,graph_worker)
@@ -244,20 +220,83 @@ def build_Graph_from_dfs_helper(surgeries, hands,state_to_node,withselfloops,gra
             target = tuple(int(target_row[x].item()) for x in hands)
             if source==target:
                 print('P')
-            key = (state_to_node[source], state_to_node[target])
+            source_node = state_to_node[source]
+            key = (source_node, state_to_node[target])
             if key in transitions.keys():
                 transitions[key] += 1
             else:
                 transitions[key] = 1
-            if withselfloops:
-                self_edge = (state_to_node[source],state_to_node[source])
-                self_weight = source_row['Time_Diff']
-                FPS = source_row['FPS']
-                if self_edge in transitions.keys():
-                    transitions[self_edge] += self_weight*FPS
-                else:
-                    transitions[self_edge] = self_weight*FPS
-    return transitions
+            if source_node not in nodes:
+                nodes.append(source_node)
+    return transitions, nodes
+
+def build_Graph_from_dfs_helper_partial(surgeries, hands,state_to_node,withselfloops,graph_worker,partial_sur=None,partial_size=None):
+    transitions = {}
+    nodes = []
+    for sur in surgeries:
+        df = pd.read_csv(os.path.join(BORIS,sur), skiprows=15)
+        processed_df = process_boris_df(df,graph_worker)
+        for i_stage in range(len(processed_df)-1):
+            source_row = processed_df.loc[i_stage]
+            target_row = processed_df.loc[i_stage+1]
+            source = tuple(int(source_row[x].item()) for x in hands)
+            target = tuple(int(target_row[x].item()) for x in hands)
+            if source==target:
+                print('P')
+            source_node = state_to_node[source]
+            key = (source_node, state_to_node[target])
+            if key in transitions.keys():
+                transitions[key] += 1
+            else:
+                transitions[key] = 1
+            if source_node not in nodes:
+                nodes.append(source_node)
+    if partial_sur is not None:
+        df = pd.read_csv(os.path.join(BORIS,partial_sur), skiprows=15)
+        processed_df = process_boris_df(df,graph_worker)
+        for i_stage in range(partial_size):
+            source_row = processed_df.loc[i_stage]
+            target_row = processed_df.loc[i_stage+1]
+            source = tuple(int(source_row[x].item()) for x in hands)
+            target = tuple(int(target_row[x].item()) for x in hands)
+            if source==target:
+                print('P')
+            source_node = state_to_node[source]
+            key = (source_node, state_to_node[target])
+            if key in transitions.keys():
+                transitions[key] += 1
+            else:
+                transitions[key] = 1
+        labels = []
+        for i_stage in range(partial_size, len(processed_df)):
+            state_row = processed_df.loc[i_stage]
+            state = tuple(int(state_row[x].item()) for x in hands)
+            node = state_to_node[state]
+            labels.append(node)
+    return transitions, nodes, labels
+
+def datasets_for_part_2(args):
+    train_data = {}
+    embedding_dir = os.path.join(args.files_dir, args.load_embeddings)
+    val_weights = test_weights = None
+    hands = HANDS[args.graph_worker]
+    tuple_len = len(hands)
+    f = open(f"state_to_node_{args.graph_worker}_new.pkl", "rb")
+    state_to_node=pickle.load(f)
+    f = open(f"node_to_state_{args.graph_worker}_new.pkl", "rb")
+    node_to_state=pickle.load(f)
+    train_surgeries =SURGERY_GROUPS_BORIS['train']+SURGERY_GROUPS_BORIS['val']
+    unk_node = max(list(node_to_state.keys()))+1
+    for i, surgery in enumerate(train_surgeries):  ##Leaves 1 Surgery out, for training the network
+        cur_surgeries = train_surgeries[:i] + train_surgeries[i + 1:]
+        transitions, nodes, labels = build_Graph_from_dfs_helper_partial(cur_surgeries, hands, state_to_node, False,
+                                                                 args.graph_worker,train_surgeries[i],args.partial_start)
+        #TODO: add UNK node+embeddings
+        G = build_graph_from_transitions(nodes+[unk_node], transitions)
+        data = create_dataset(G=G, args=args, load_embeddings=embedding_dir)
+        data.weight = data.weight.to(torch.float32)
+        train_data[i]={'data':data,'labels':labels}
+    return train_data
 
 def build_graph_from_transitions(nodes,transitions,edges=None):
     G = nx.DiGraph()
@@ -280,11 +319,13 @@ def create_dataset(G,args=None,load_embeddings=None):
             embeddings=pickle.load(f)
         else:
             embeddings = create_embeddings(G,args)
+        node_ids = {i:i for i in G.nodes}
         nx.set_node_attributes(G, embeddings, "x")
+        nx.set_node_attributes(G, node_ids, "id")
         data = from_networkx(G)
     else:
         n = len(G.nodes)
-        embeddings = {i: [0.]*i+[1.]+[0.]*(24-i) for i in range(n)}
+        embeddings = {i: i for i in range(n)}
         nx.set_node_attributes(G, embeddings, "x")
         data = from_networkx(G)
         # data.x = data.x.to(torch.float32)
@@ -436,8 +477,11 @@ def create_dataset_from_graph_cora(G):
     :return: Dataset for network
     """
     dataset = Planetoid('./tmp/cora', 'Cora')
-    num_nodes= G.number_of_nodes()
-    x = dataset[0].x[:num_nodes]
+    # num_nodes= G.number_of_nodes()
+    node_ids = {i: i for i in G.nodes}
+    nodes = list(G.nodes)
+    x = dataset[0].x[nodes]
+    nx.set_node_attributes(G, node_ids, "id")
     data = from_networkx(G)
     data.train_mask = data.val_mask = data.test_mask = data.y = None
     data.x = x

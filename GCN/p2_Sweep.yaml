@@ -1,0 +1,16 @@
+program: LinkPred_part2.py
+method: bayes
+metric:
+  name: best val acc
+  goal: maximize
+parameters:
+  p1_run_name:
+    values: ['6gwrxooj', 'grtacxzl', '19fk13ln', 'a732w10f', 'b25f3i2q', 'j2t5h5ul',
+             'nrsqofhg', 'nkqfz3ho', 'ip19zll4', 'ydcvyv46']
+  lr:
+    min: 0.00001
+    max: 0.2
+  train_type:
+    values: ['ForcedNoSelfLoops', 'NoSelfLoops']
+  loss_calc:
+    values: ['surgery','node']

@@ -7,8 +7,7 @@ from utils import SURGERY_GROUPS
 import numpy as np
 import argparse
 import random
-from link_utils import set_seed, read_surgeries,build_Graph, create_dataset, MLP, plot_graph
-from link_utils import Net, Net_with_embedding, datasets_for_part_2, find_edge_idx,datasets_for_part_2_overfitcheck
+from link_utils_new import build_Graph_from_dfs_new, Net, Net_with_embedding,set_seed,create_dataset,datasets_for_part_2, find_edge_idx
 import networkx as nx
 import torch.nn.functional as F
 import wandb
@@ -22,24 +21,6 @@ warnings.filterwarnings("ignore")
 MODELS ={
 '6gwrxooj':{'activation': 'tanh', 'embedding_dim': 128, 'embedding_model': 'DeepWalk', 'first_conv_f': 1024,
             'num_layers': 5, 'dir': 'run-20221104_130406-6gwrxooj', 'p1_model_type': 'MDN-IPG-BORIS-NoSelfLoops'},
-'grtacxzl':{'activation': 'tanh', 'embedding_dim': 1433, 'embedding_model': 'Cora', 'first_conv_f': 512,
-            'num_layers': 7, 'dir': 'run-20221104_151049-grtacxzl', 'p1_model_type': 'MDN-IPG-BORIS-NoSelfLoops'},
-'19fk13ln':{'activation': 'tanh', 'embedding_dim': 256, 'embedding_model': 'DeepWalk', 'first_conv_f': 128,
-            'num_layers': 6, 'dir': 'run-20221105_132757-19fk13ln', 'p1_model_type': 'MDN-IPG-BORIS-NoSelfLoops'},
-'a732w10f':{'activation': 'tanh', 'embedding_dim': 256, 'embedding_model': 'DeepWalk', 'first_conv_f': 2048,
-            'num_layers': 5, 'dir': 'run-20221105_163153-a732w10f', 'p1_model_type': 'MDN-IPG-BORIS-NoSelfLoops'},
-'b25f3i2q':{'activation': 'tanh', 'embedding_dim': 512, 'embedding_model': 'DeepWalk', 'first_conv_f': 256,
-            'num_layers': 3, 'dir': 'run-20221105_092038-b25f3i2q', 'p1_model_type': 'MDN-IPG-BORIS-NoSelfLoops'},
-'j2t5h5ul':{'activation': 'tanh', 'embedding_dim': 1433, 'embedding_model': 'Cora', 'first_conv_f': 512,
-            'num_layers': 6, 'dir': 'run-20221106_084033-j2t5h5ul', 'p1_model_type': 'MDN-IPG-BORIS'},
-'nrsqofhg':{'activation': 'tanh', 'embedding_dim': 1433, 'embedding_model': 'Cora', 'first_conv_f': 512,
-            'num_layers': 7, 'dir': 'run-20221105_222030-nrsqofhg', 'p1_model_type': 'MDN-IPG-BORIS'},
-'nkqfz3ho':{'activation': 'sigmoid', 'embedding_dim': 1433, 'embedding_model': 'Cora', 'first_conv_f': 512,
-            'num_layers': 5, 'dir': 'run-20221106_074219-nkqfz3ho', 'p1_model_type': 'MDN-IPG-BORIS'},
-'ip19zll4':{'activation': 'sigmoid', 'embedding_dim': 1433, 'embedding_model': 'Cora', 'first_conv_f': 256,
-            'num_layers': 6, 'dir': 'run-20221106_073905-ip19zll4', 'p1_model_type': 'MDN-IPG-BORIS'},
-'ydcvyv46':{'activation': 'tanh', 'embedding_dim': 512, 'embedding_model': 'DeepWalk', 'first_conv_f': 128,
-            'num_layers': 5, 'dir': 'run-20221106_060558-ydcvyv46', 'p1_model_type': 'MDN-IPG-BORIS'}
     }
 
 def set_seed(seed=42):
@@ -56,20 +37,14 @@ def parsing():
     parser.add_argument('--Project', default='MDN-NextStep-BORIS_new', type=str)
 
     parser.add_argument('--graph_worker', choices=['surgeon', 'assistant','both'], default='surgeon')
-    parser.add_argument('--p1_run_name', default='ydcvyv46', type=str)
+    parser.add_argument('--p1_run_name', default='6gwrxooj', type=str)
     parser.add_argument('--p1_model_type', choices=['MDN-IPG-BORIS', 'MDN-IPG-BORIS-NoSelfLoops'], default='MDN-IPG-BORIS')
     parser.add_argument('--train_type', choices=['ForcedNoSelfLoops', 'NoSelfLoops','FullGraph'], default='ForcedNoSelfLoops')
+    parser.add_argument('--partial_start', default=5, type=int)
+
     parser.add_argument('--loss_calc', choices=['surgery', 'node', 'batch'], default='surgery')
     parser.add_argument('--batch_size', default=6, type=int)
-
-    # parser.add_argument('--files_dir', type=str, default='/data/home/liory/MyDigitalNurse/GCN/wandb/run-20221104_130406-6gwrxooj/files/')
-    # surgical_data_science / MDN - IPG - BORIS - NoSelfLoops_surgeon / 6gwrxooj - New No loops - Surgeon
-    # --activation = tanh - -embedding_dim = 128 embedding_model=DeepWalk --first_conv_f=1024 --lr=0.030827617049247406
-    # --num_layers = 5
     parser.add_argument('--files_dir', type=str, default='/data/home/liory/MyDigitalNurse/GCN/wandb/run-20221106_084033-j2t5h5ul/files/')
-    # /data/home/liory/MyDigitalNurse/GCN/wandb/run-20221106_084033-j2t5h5ul/files/ - new trained with self loops
-    # --activation = tanh - -embedding_dim = 512 embedding_model=Cora --first_conv_f=512 --lr=0.0043480645911270575  --num_layers=6
-
     parser.add_argument('--model', default='IPG_both' )
     parser.add_argument('--first_conv_f', default=256 , type=int)
     parser.add_argument('--num_layers', default=4, type=int)
@@ -137,39 +112,6 @@ class Train_next_step_pred():
         final_loss = np.mean(losses)
         return final_loss, np.mean(acc)
 
-    #
-    # def train_surgery(self, data,labels):
-    #     self.model.train()
-    #     self.optimizer.zero_grad()
-    #     last_node=labels[0]
-    #     acc=[]
-    #     node_labels= []
-    #     losses = []
-    #     all_logits=[]
-    #     loss = 0
-    #     for i, node in enumerate(labels[1:]):
-    #         # z = self.model.encode(x=data.x, edge_index=data.edge_index, weight=data.weight)
-    #         logits = self.model.predict(x=data.x, edge_index=data.edge_index, weight=data.weight,
-    #                                                 last_step=last_node, removeselfloops=self.remove, i=i)
-    #         # z = self.model.encode(x=data.x, edge_index=data.edge_index, weight=data.weight)
-    #         # prediction, logits=self.model.predict(z,last_node,removeselfloops=self.remove)
-    #         all_logits.append(logits)
-    #         prediction = torch.argmax(logits.detach())
-    #         node_labels.append(node)
-    #         acc.append(prediction==node.item())
-    #         # cur_edge_index = find_edge_idx(data.edge_index, last_node, node)
-    #         # if cur_edge_index>-1:
-    #         #     data.weight[cur_edge_index]+=1
-    #         # else:
-    #         #     data.edge_index = torch.cat([data.edge_index, torch.tensor([[last_node], [node]])], dim=1)
-    #         #     data.weight = torch.cat([data.weight, torch.tensor([1])], dim=0)
-    #         last_node=node
-    #         # loss += F.cross_entropy(logits, torch.tensor(node))
-    #     loss = F.cross_entropy(torch.stack(all_logits), torch.tensor(node_labels))
-    #     loss.backward()
-    #     self.optimizer.step()
-    #     return loss.item()/(len(labels)-1), np.mean(acc)
-
     def train_surgery(self, data,labels, labels_weight=None):
         """
         :return:
@@ -203,8 +145,6 @@ class Train_next_step_pred():
             loss += F.cross_entropy(logits, torch.tensor(node))
             prediction = torch.argmax(logits)
             acc.append(prediction==node)
-            # acc.append(prediction==node.item())
-            # losses.append(loss.item())
         loss.backward()
         self.optimizer.step()
         mean_loss = loss.item()/len(node_labels)
@@ -451,36 +391,36 @@ if __name__ == "__main__":
     args = edit_args(args)
     # wandb.init(project=args.Project, entity="surgical_data_science", mode=args.wandb_mode)  # logging to wandb
     # wandb.config.update(args)
-    train_data, full_dataset, val_labels, test_labels = datasets_for_part_2(args,G_path,L_path)
+    train_data = datasets_for_part_2(args)
     # full_dataset, val_labels, test_labels = datasets_for_part_2(args)
     # train_samples =list(range(20))
-    train_samples = [0] #OVERFIT
+    # train_samples = [0] #OVERFIT
     # model = Net_with_embedding(dataset=None,args=args) if args.embedding_model=='torch' else Net(dataset=None,args=args)
     # model = Net(dataset=None,args=args)
     # model = MLP(dataset=None,args=args)
     # total_params = sum(p.numel() for p in model.parameters())
-    print(f'{total_params:,} total parameters.')
-    total_trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    print(f'{total_trainable_params:,} training parameters.')
-    print(model)
-    model.load_state_dict(torch.load(os.path.join(args.files_dir,args.model)))
+    # print(f'{total_params:,} total parameters.')
+    # total_trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    # print(f'{total_trainable_params:,} training parameters.')
+    # print(model)
+    # model.load_state_dict(torch.load(os.path.join(args.files_dir,args.model)))
     # optimizer = torch.optim.Adam(params=model.parameters(), lr=args.lr)
-    trainer = Train_next_step_pred(model,optimizer=None,args=args,train_data=train_data, full_training_dataset=full_dataset,
-                                   val_labels= val_labels,test_labels=test_labels,
-                                   embedding_dir=os.path.join(args.files_dir,args.load_embeddings))
-    best_val_acc = best_test_acc = best_epoch = best_val_loss = best_test_loss = 0
-    best_loss = np.float('inf')
-    best_acc = best_loss_epoch = best_acc_epoch = 0
-    for epoch in range(args.num_epochs):
-        random.shuffle(train_samples)
-        train_epoch_losses,train_epoch_accs=trainer.predictions(train_samples)
-        print(f'Training Epoch {epoch+1} \n Mean Loss: {train_epoch_losses}, Mean Accuracy: {train_epoch_accs}')
-        if train_epoch_losses<best_loss:
-            best_loss = train_epoch_losses
-            best_loss_epoch=epoch
-        if best_acc<train_epoch_accs:
-            best_acc = train_epoch_accs
-            best_acc_epoch = epoch
+    # trainer = Train_next_step_pred(model,optimizer=None,args=args,train_data=train_data, full_training_dataset=full_dataset,
+    #                                val_labels= val_labels,test_labels=test_labels,
+    #                                embedding_dir=os.path.join(args.files_dir,args.load_embeddings))
+    # best_val_acc = best_test_acc = best_epoch = best_val_loss = best_test_loss = 0
+    # best_loss = np.float('inf')
+    # best_acc = best_loss_epoch = best_acc_epoch = 0
+    # for epoch in range(args.num_epochs):
+    #     random.shuffle(train_samples)
+    #     train_epoch_losses,train_epoch_accs=trainer.predictions(train_samples)
+    #     print(f'Training Epoch {epoch+1} \n Mean Loss: {train_epoch_losses}, Mean Accuracy: {train_epoch_accs}')
+    #     if train_epoch_losses<best_loss:
+    #         best_loss = train_epoch_losses
+    #         best_loss_epoch=epoch
+    #     if best_acc<train_epoch_accs:
+    #         best_acc = train_epoch_accs
+    #         best_acc_epoch = epoch
         # if args.loss_calc=='batch':
         #     val_epoch_losses, val_epoch_accs, test_epoch_losses, test_epoch_accs = trainer.test_batch()
         # else:
