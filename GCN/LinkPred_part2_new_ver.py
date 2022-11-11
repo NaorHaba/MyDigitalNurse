@@ -19,8 +19,12 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 warnings.filterwarnings("ignore")
 
 MODELS ={
-'6gwrxooj':{'activation': 'tanh', 'embedding_dim': 128, 'embedding_model': 'DeepWalk', 'first_conv_f': 1024,
-            'num_layers': 5, 'dir': 'run-20221104_130406-6gwrxooj', 'p1_model_type': 'MDN-IPG-BORIS-NoSelfLoops'},
+"5nmt5mjz":{'activation': 'sigmoid', 'embedding_dim': 512, 'embedding_model': 'DeepWalk', 'first_conv_f': 128, 'num_layers': 3, 'dir': 'run-20221110_103619-5nmt5mjz', 'p1_model_type': 'MDN-IPG-BORIS-NoSelfLoops'},
+"pslhay65":{'activation': 'tanh', 'embedding_dim': 512, 'embedding_model': 'DeepWalk', 'first_conv_f': 256, 'num_layers': 7, 'dir': 'run-20221110_091158-pslhay65', 'p1_model_type': 'MDN-IPG-BORIS-NoSelfLoops'},
+"fihmrns0":{'activation': 'tanh', 'embedding_dim': 256, 'embedding_model': 'DeepWalk', 'first_conv_f': 512, 'num_layers': 3, 'dir': 'run-20221110_075818-fihmrns0', 'p1_model_type': 'MDN-IPG-BORIS-NoSelfLoops'},
+"elznjvsn":{'activation': 'tanh', 'embedding_dim': 256, 'embedding_model': 'DeepWalk', 'first_conv_f': 256, 'num_layers': 3, 'dir': 'run-20221110_034915-elznjvsn', 'p1_model_type': 'MDN-IPG-BORIS-NoSelfLoops'},
+"9xvpfxgs":{'activation': 'lrelu', 'embedding_dim': 1433, 'embedding_model': 'Cora', 'first_conv_f': 128, 'num_layers': 3, 'dir': 'run-20221110_052015-9xvpfxgs', 'p1_model_type': 'MDN-IPG-BORIS-NoSelfLoops'},
+"d1ngf5p9":{'activation': 'lrelu', 'embedding_dim': 256, 'embedding_model': 'DeepWalk', 'first_conv_f': 256, 'num_layers': 5, 'dir': 'run-20221110_081727-d1ngf5p9', 'p1_model_type': 'MDN-IPG-BORIS-NoSelfLoops'}
     }
 
 def set_seed(seed=42):
@@ -33,27 +37,29 @@ def set_seed(seed=42):
 def parsing():
     parser = argparse.ArgumentParser()
     parser.add_argument('--seed', default=42, type=int)
-    parser.add_argument('--wandb_mode', choices=['online', 'offline', 'disabled'], default='disabled', type=str)
-    parser.add_argument('--Project', default='MDN-NextStep-BORIS_new', type=str)
+    parser.add_argument('--wandb_mode', choices=['online', 'offline', 'disabled'], default='online', type=str)
+    parser.add_argument('--Project', default='MDN-NextStep-BORIS_new_1011', type=str)
 
     parser.add_argument('--graph_worker', choices=['surgeon', 'assistant','both'], default='surgeon')
-    parser.add_argument('--p1_run_name', default='6gwrxooj', type=str)
+    parser.add_argument('--p1_run_name', default='9xvpfxgs', type=str)
     parser.add_argument('--p1_model_type', choices=['MDN-IPG-BORIS', 'MDN-IPG-BORIS-NoSelfLoops'], default='MDN-IPG-BORIS')
-    parser.add_argument('--train_type', choices=['ForcedNoSelfLoops', 'NoSelfLoops','FullGraph'], default='ForcedNoSelfLoops')
+    parser.add_argument('--train_type', choices=['ForcedNoSelfLoops', 'NoSelfLoops','FullGraph'], default='NoSelfLoops')
     parser.add_argument('--partial_start', default=5, type=int)
 
     parser.add_argument('--loss_calc', choices=['surgery', 'node', 'batch'], default='surgery')
     parser.add_argument('--batch_size', default=6, type=int)
-    parser.add_argument('--files_dir', type=str, default='/data/home/liory/MyDigitalNurse/GCN/wandb/run-20221106_084033-j2t5h5ul/files/')
+    parser.add_argument('--files_dir', type=str, default='/data/home/liory/MyDigitalNurse/GCN/wandb/run-20221110_103619-5nmt5mjz/files/')
     parser.add_argument('--model', default='IPG_both' )
     parser.add_argument('--first_conv_f', default=256 , type=int)
     parser.add_argument('--num_layers', default=4, type=int)
     parser.add_argument('--activation', choices=['relu','lrelu','tanh','sigmoid'], default='tanh')
     parser.add_argument('--load_embeddings', default='train_embeddings_both.pkl' )
-    parser.add_argument('--embedding_model', choices=['Cora','DeepWalk','onehot'], default='onehot')
-    parser.add_argument('--embedding_dim', default=25, type=int)
+    parser.add_argument('--embedding_model', choices=['Cora','DeepWalk','onehot'], default='DeepWalk')
+    parser.add_argument('--embedding_dim', default=512, type=int)
     parser.add_argument('--num_epochs', default=500, type=int)
-    parser.add_argument('--lr', default=0.01, type=float)
+    parser.add_argument('--early_stop', default=10, type=float)
+
+    parser.add_argument('--lr', default=0.12381015946468615, type=float)
     args = parser.parse_args()
     args.load_embeddings = f'train_embeddings_{args.graph_worker}.pkl'
     args.model = f'IPG_{args.graph_worker}'
@@ -63,308 +69,170 @@ def parsing():
 
 
 class Train_next_step_pred():
-    def __init__(self,  model:Net,optimizer:torch.optim,train_data,full_training_dataset, val_labels,test_labels,args, embedding_dir=None):
+    def __init__(self,  model:Net,optimizer:torch.optim,train_data,args,unk_node=18):
         self.model = model
         self.optimizer=  torch.optim.Adam(params=self.model.parameters(), lr=args.lr)
         self.scheduler = ReduceLROnPlateau(self.optimizer, mode='min', factor=0.005, patience=5, threshold=0.1,
                                       threshold_mode='abs', verbose=True)
         self.args=args
         self.loss_calc = args.loss_calc
-        self.full_training_dataset = full_training_dataset
+        # self.full_training_dataset = full_training_dataset
         self.train_data = train_data
-        self.labels = {'val': val_labels, 'test': test_labels}
-        self.videos_path = args.videos_path
+        self.test_data = test_data
+        # self.labels = {'val': val_labels, 'test': test_labels}
+        # self.videos_path = args.videos_path
         self.embedding_dir = os.path.join(args.files_dir, args.load_embeddings)
         self.remove = True if 'Forced' in args.train_type else False
         self.best_loss = np.float('inf')
         self.num_epochs_not_improved = 0
         self.sched_use = 0
+        self.unk_node=unk_node
 
-    def train_frames_batch(self, data,labels):
-        last_node=labels[0]
-        acc=[]
-        losses = []
-        batch_index = range(1,len(labels)-1,self.args.batch_size)
-        for batch_start in batch_index:
-            self.model.train()
-            self.optimizer.zero_grad()
-            cur_labels = labels[batch_start:batch_start+self.args.batch_size]
-            node_labels = []
-            all_logits=[]
-            for i,node in enumerate(cur_labels):
-                # z = self.model.encode(x=data.x, edge_index=data.edge_index, weight=data.weight)
-                prediction, logits=self.model.predict(x=data.x, edge_index=data.edge_index, weight=data.weight,
-                                                      last_step=last_node,removeselfloops=self.remove, i=i)
-                all_logits.append(logits)
-                node_labels.append(node)
-                acc.append(prediction==node.item())
-                cur_edge_index = find_edge_idx(data.edge_index, last_node, node)
-                if cur_edge_index>-1:
-                    data.weight[cur_edge_index]+=1
-                else:
-                    data.edge_index = torch.cat([data.edge_index, torch.tensor([[last_node], [node]])], dim=1)
-                    data.weight = torch.cat([data.weight, torch.tensor([1])], dim=0)
-                last_node=node
-            loss = F.cross_entropy(torch.stack(all_logits), torch.tensor(node_labels))
-            loss.backward()
-            self.optimizer.step()
-            losses.append(loss.item())
-        final_loss = np.mean(losses)
-        return final_loss, np.mean(acc)
+    def find_node_idx_in_data(self,ids,node):
+        find_idx = (ids == node).nonzero()
+        if find_idx.shape[0] != 0:
+            node_idx = find_idx.item()
+        else:
+            node_idx =(ids == self.unk_node).nonzero().item()
+        return node_idx
 
-    def train_surgery(self, data,labels, labels_weight=None):
+
+    def train_surgery(self, data,labels):
         """
         :return:
         """
         last_node=labels[0]
+        last_node_idx = self.find_node_idx_in_data(data.id,last_node)
         acc=[]
         node_labels= []
+        node_labels_idxs = []
         losses = []
         loss = 0
         self.model.train()
         self.optimizer.zero_grad()
         for i,node in enumerate(labels[1:]):
-            logits = self.model.predict(last_step=last_node,x=data.x, edge_index=data.edge_index, weight=data.weight,
+            logits = self.model.predict(last_step=last_node_idx,x=data.x, edge_index=data.edge_index, weight=data.weight,
                                                     removeselfloops=self.remove)
+            node_idx = self.find_node_idx_in_data(data.id,node)
             node_labels.append(node)
-            cur_edge_index = find_edge_idx(data.edge_index, last_node, node)
+            node_labels_idxs.append(node_idx)
+            cur_edge_index = find_edge_idx(data.edge_index, last_node_idx, node_idx)
             if cur_edge_index>-1:
                 data.weight[cur_edge_index]+=1
             else:
-                data.edge_index = torch.cat([data.edge_index, torch.tensor([[last_node], [node]])], dim=1)
+                data.edge_index = torch.cat([data.edge_index, torch.tensor([[last_node_idx], [node_idx]])], dim=1)
                 data.weight = torch.cat([data.weight, torch.tensor([1])], dim=0)
-            if labels_weight is not None:
-                self_edge_index = find_edge_idx(data.edge_index, last_node, last_node)
-                self_edge_weight = labels_weight[i-1]
-                if self_edge_index > -1:
-                    data.weight[self_edge_index] += self_edge_weight.item()
-                else:
-                    data.edge_index = torch.cat([data.edge_index, torch.tensor([[last_node], [node]])], dim=1)
-                    data.weight = torch.cat([data.weight, torch.tensor([self_edge_weight])], dim=0)
             last_node=node
-            loss += F.cross_entropy(logits, torch.tensor(node))
+            last_node_idx = node_idx
+            loss += F.cross_entropy(logits, torch.tensor(last_node_idx))
             prediction = torch.argmax(logits)
-            acc.append(prediction==node)
+            acc.append(prediction==last_node_idx)
         loss.backward()
         self.optimizer.step()
         mean_loss = loss.item()/len(node_labels)
-        self.scheduler.step(mean_loss)
+        # self.scheduler.step(mean_loss)
         return mean_loss, np.mean(acc)
 
     def train_node(self, data,labels):
         """
         :return:
         """
-        # labels = list(range(10))
-        # embeddings = {i: torch.tensor([0.]*i+[1.]+[0.]*(10-i-1)) for i in labels}
-        last_node=labels[0]
-        acc=[]
-        node_labels= []
-        losses = []
-        for i,node in enumerate(labels[1:]):
-            self.model.train()
-            self.optimizer.zero_grad()
-            # z = self.model.encode(x=data.x, edge_index=data.edge_index, weight=data.weight)
-            # prediction, logits=self.model.predict(z,last_node,removeselfloops=self.remove)
-            # z = self.model.encode(x=data.x, edge_index=data.edge_index, weight=data.weight)
-            # prediction, logits = self.model.predict(x=data.x, edge_index=data.edge_index, weight=data.weight,
-            #                                         last_step=last_node, removeselfloops=self.remove)
-            # x = torch.cat([data.x[last_node],torch.tensor([i])])
-            logits = self.model.predict(last_step=last_node,x=data.x, edge_index=data.edge_index, weight=data.weight,
-                                                    removeselfloops=self.remove)
-            node_labels.append(node)
-            cur_edge_index = find_edge_idx(data.edge_index, last_node, node)
-            if cur_edge_index>-1:
-                data.weight[cur_edge_index]+=1
-            else:
-                data.edge_index = torch.cat([data.edge_index, torch.tensor([[last_node], [node]])], dim=1)
-                data.weight = torch.cat([data.weight, torch.tensor([1])], dim=0)
-            last_node=node
-            loss = F.cross_entropy(logits, torch.tensor(node))
-            loss.backward()
-            self.optimizer.step()
-            self.scheduler.step(loss.item())
-            prediction = torch.argmax(logits)
-            acc.append(prediction==node)
-            # acc.append(prediction==node.item())
-            losses.append(loss.item())
-        final_loss = np.mean(losses)
-        return final_loss, np.mean(acc)
-
-
-
-    def train(self, data,labels):
         """
         :return:
         """
-        self.model.train()
         last_node=labels[0]
+        last_node_idx = self.find_node_idx_in_data(data.id,last_node)
         acc=[]
         node_labels= []
+        node_labels_idxs = []
         losses = []
-        if self.loss_calc=='surgery':
+        loss = 0
+        for i,node in enumerate(labels[1:]):
+            self.model.train()
             self.optimizer.zero_grad()
-        for node in labels[1:]:
-            all_logits = []
-            z = self.model.encode(x=data.x, edge_index=data.edge_index, weight=data.weight)
-            prediction, logits=self.model.predict(z,last_node,removeselfloops=self.remove)
-            all_logits.append(logits)
+            logits = self.model.predict(last_step=last_node_idx,x=data.x, edge_index=data.edge_index, weight=data.weight,
+                                                    removeselfloops=self.remove)
             node_labels.append(node)
-            acc.append(prediction==node.item())
-            cur_edge_index = find_edge_idx(data.edge_index, last_node, node)
+            node_idx = self.find_node_idx_in_data(data.id,node)
+            node_labels_idxs.append(node_idx)
+            cur_edge_index = find_edge_idx(data.edge_index, last_node_idx, node_idx)
             if cur_edge_index>-1:
                 data.weight[cur_edge_index]+=1
             else:
-                data.edge_index = torch.cat([data.edge_index, torch.tensor([[last_node], [node]])], dim=1)
+                data.edge_index = torch.cat([data.edge_index, torch.tensor([[last_node_idx], [node_idx]])], dim=1)
                 data.weight = torch.cat([data.weight, torch.tensor([1])], dim=0)
             last_node=node
-            if self.loss_calc=='node':
-                loss = F.cross_entropy(logits, torch.tensor(node))
-                loss.backward()
-                self.optimizer.step()
-                losses.append(loss.item())
-                self.optimizer.zero_grad()
-            if self.loss_calc=='batch' and len(all_logits)==args.batch_size:
-                print('batch loss')
-                loss = F.cross_entropy(logits, torch.tensor(node))
-                loss.backward()
-                self.optimizer.step()
-                losses.append(loss.item())
-                self.optimizer.zero_grad()
-                all_logits=[]
-        if self.loss_calc == 'batch' and len(all_logits)>0:
-            loss = F.cross_entropy(logits, torch.tensor(node))
-            loss.backward()
-            self.optimizer.step()
+            last_node_idx = node_idx
+            loss = F.cross_entropy(logits, torch.tensor(node_idx))
             losses.append(loss.item())
-            self.optimizer.zero_grad()
-            all_logits = []
-        if self.loss_calc=='surgery':
-            loss = F.cross_entropy(torch.stack(all_logits), torch.tensor(node_labels))
             loss.backward()
             self.optimizer.step()
-        final_loss = np.mean(losses) if self.loss_calc!='surgery' else loss.item()
-        return final_loss, np.mean(acc)
-
-
-    @torch.no_grad()
-    def test_batch(self):
-        self.model.eval()
-        res = {}
-        for k, all_labels in self.labels.items():
-            losses=[]
-            accs = []
-            for sur_labels in all_labels:
-                full_training_dataset = copy.deepcopy(self.full_training_dataset)
-                batch_index = range(1, len(sur_labels) - 1, self.args.batch_size)
-                last_node= sur_labels[0]
-                sur_losses = []
-                for batch_start in batch_index:
-                    cur_labels = sur_labels[batch_start:batch_start + self.args.batch_size]
-                    all_logits, node_labels,  = [], []
-                    for node in cur_labels:
-                        # z = self.model.encode(x=full_training_dataset.x, edge_index=full_training_dataset.edge_index,
-                        #                       weight=full_training_dataset.weight)
-                        # prediction, logits=self.model.predict(z,last_node,removeselfloops=self.remove)
-                        prediction, logits = self.model.predict(x=full_training_dataset.x, edge_index=full_training_dataset.edge_index,
-                                                                weight=full_training_dataset.weight,
-                                                                last_step=last_node, removeselfloops=self.remove)
-                        all_logits.append(logits)
-                        node_labels.append(node)
-                        accs.append(prediction==node)
-                        cur_edge_index = find_edge_idx(full_training_dataset.edge_index, last_node, prediction)
-                        if cur_edge_index > -1:
-                            full_training_dataset.weight[cur_edge_index] += 1
-                        else:
-                            full_training_dataset.edge_index =\
-                                torch.cat([full_training_dataset.edge_index, torch.tensor([[last_node], [prediction]])], dim=1)
-                            full_training_dataset.weight = torch.cat([full_training_dataset.weight, torch.tensor([1])], dim=0)
-                        last_node=prediction
-                    loss = F.cross_entropy(torch.stack(all_logits), torch.tensor(node_labels))
-                    sur_losses.append(loss.item())
-                losses.append(np.mean(sur_losses))
-            res[f'{k}_loss'] = np.mean(losses)
-            res[f'{k}_acc'] = np.mean(accs)
-        return res['val_loss'], res['val_acc'], res['test_loss'], res['test_acc']
-
-
-    @torch.no_grad()
+            prediction = torch.argmax(logits)
+            acc.append(prediction==last_node_idx)
+        mean_loss = np.mean(losses)
+        # self.scheduler.step(mean_loss)
+        return mean_loss, np.mean(acc)
+    #
+    # @torch.no_grad()
     def test(self):
         self.model.eval()
-        res = {}
-        for k, all_labels in self.labels.items():
-            losses=[]
-            accs = []
-            gt_accs = []
-            for sur_labels in all_labels:
-                full_training_dataset = copy.deepcopy(self.full_training_dataset)
-                last_node= sur_labels[0]
-                all_logits, node_labels, sur_losses = [], [], []
-                labels = sur_labels[0:]
-                for node in labels:
-                    # z = self.model.encode(x=full_training_dataset.x, edge_index=full_training_dataset.edge_index,
-                    #                       weight=full_training_dataset.weight)
-                    # prediction, logits=self.model.predict(z,last_node,removeselfloops=self.remove)
-                    prediction, logits = self.model.predict(x=full_training_dataset.x,
-                                                            edge_index=full_training_dataset.edge_index,
-                                                            weight=full_training_dataset.weight,
-                                                            last_step=last_node, removeselfloops=self.remove)
-                    all_logits.append(logits)
-                    node_labels.append(node)
-                    accs.append(prediction==node)
-                    gt_accs.append(node==node)
-                    cur_edge_index = find_edge_idx(full_training_dataset.edge_index, last_node, prediction)
-                    if cur_edge_index > -1:
-                        full_training_dataset.weight[cur_edge_index] += 1
-                    else:
-                        full_training_dataset.edge_index =\
-                            torch.cat([full_training_dataset.edge_index, torch.tensor([[last_node], [prediction]])], dim=1)
-                        full_training_dataset.weight = torch.cat([full_training_dataset.weight, torch.tensor([1])], dim=0)
-                    last_node=prediction
-                    if self.loss_calc == 'node':
-                        loss = F.cross_entropy(logits, torch.tensor(node))
-                        sur_losses.append(loss.item())
-                if self.loss_calc == 'surgery':
-                    loss = F.cross_entropy(torch.stack(all_logits), torch.tensor(node_labels))
-                    losses.append(loss.item())
+        all_losses = []
+        all_accs = []
+        for i, data_dict in self.test_data.items():
+            data = data_dict['data']
+            labels = data_dict['labels']
+            last_node = labels[0]
+            last_node_idx = self.find_node_idx_in_data(data.id, last_node)
+            sur_acc = []
+            node_labels = []
+            node_labels_idxs = []
+            sur_losses = []
+            for i, node in enumerate(labels[1:]):
+                node_idx = self.find_node_idx_in_data(data.id, node)
+                logits = self.model.predict(last_step=last_node_idx, x=data.x, edge_index=data.edge_index,
+                                            weight=data.weight,
+                                            removeselfloops=self.remove)
+                loss = F.cross_entropy(logits, torch.tensor(node_idx))
+                prediction = torch.argmax(logits)
+                sur_acc.append(prediction == node_idx)
+                last_node_idx = prediction
+                sur_losses.append(loss.item())
+                cur_edge_index = find_edge_idx(data.edge_index, last_node_idx, prediction)
+                if cur_edge_index > -1:
+                    data.weight[cur_edge_index] += 1
                 else:
-                    losses.append(np.mean(sur_losses))
-            res[f'{k}_loss'] = np.mean(losses)
-            res[f'{k}_acc'] = np.mean(accs)
-            res[f'{k}_gt_acc'] = np.mean(gt_accs)
-        return res['val_loss'], res['val_acc'], res['test_loss'], res['test_acc'],res['val_gt_acc'], res['test_gt_acc']
+                    data.edge_index = torch.cat([data.edge_index, torch.tensor([[last_node_idx], [prediction]])], dim=1)
+                    data.weight = torch.cat([data.weight, torch.tensor([1])], dim=0)
+            mean_loss = np.mean(sur_losses)
+            all_losses.append(mean_loss)
+            all_accs.append(np.mean(sur_acc))
+        return np.mean(all_losses),np.mean(all_accs)
 
-
-    def read_train_data(self,i):
-        data_path = os.path.join(self.videos_path, f'{i}')
-        Graph = nx.read_gpickle(os.path.join(data_path, "Graph.gpickle"))
-        labels = torch.load(os.path.join(data_path, "Labels"))
-        data = create_dataset(G=Graph, args=args, load_embeddings=self.embedding_dir)
-        return data, labels
-
+    #
 
     def predictions(self,samples):
         start = time.time()
+        epoch_losses=[]
+        epoch_accs = []
         for i in samples:
             # dataset,labels = self.read_train_data(i)
             dataset = self.train_data[i]['data']
             labels = self.train_data[i]['labels']
-            weights = self.train_data[i]['labels_weight']
-            epoch_losses=[]
-            epoch_accs = []
+            # weights = self.train_data[i]['labels_weight']
             print('Learning Surgery', i)
             if self.args.loss_calc=='node':
-                mean_surg_loss, mean_surg_acc = self.train_node(dataset,labels, weights)
+                mean_surg_loss, mean_surg_acc = self.train_node(dataset,labels)
             elif self.args.loss_calc=='batch':
-                mean_surg_loss, mean_surg_acc = self.train_frames_batch(dataset,labels,weights)
+                mean_surg_loss, mean_surg_acc = self.train_frames_batch(dataset,labels)
             else:
-                mean_surg_loss, mean_surg_acc = self.train_surgery(dataset,labels,weights)
+                mean_surg_loss, mean_surg_acc = self.train_surgery(dataset,labels)
             print('Time for surgery:', time.time()-start)
             start = time.time()
             print('Current Surgery Loss: ', mean_surg_loss, 'Mean Accuracy: ', mean_surg_acc)
             epoch_losses.append(mean_surg_loss)
             epoch_accs.append(mean_surg_acc)
         return np.mean(epoch_losses),np.mean(epoch_accs)
+
 
 def edit_args(args):
     model_dic = MODELS[args.p1_run_name]
@@ -380,70 +248,61 @@ def edit_args(args):
 if __name__ == "__main__":
     args = parsing()
     set_seed(args.seed)
-    if 'NoSelfLoops' in args.p1_model_type:
-        args.videos_path = f'/data/home/liory/MyDigitalNurse/GCN/Training_datasets_part2_NoSelfLoops_{args.graph_worker}'
-        G_path =  f'/data/home/liory/MyDigitalNurse/GCN/Training_datasets_part2_NoSelfLoops_{args.graph_worker}'
-        L_path =  f'/data/home/liory/MyDigitalNurse/GCN/Training_datasets_part2_NoSelfLoops_{args.graph_worker}'
-    else:
-        args.videos_path = f'/data/home/liory/MyDigitalNurse/GCN/Training_datasets_part2_{args.graph_worker}'
-        G_path=f'/data/home/liory/MyDigitalNurse/GCN/Training_datasets_part2_{args.graph_worker}_new'
-        L_path =  f'/data/home/liory/MyDigitalNurse/GCN/Training_datasets_part2_{args.graph_worker}_new'
     args = edit_args(args)
-    # wandb.init(project=args.Project, entity="surgical_data_science", mode=args.wandb_mode)  # logging to wandb
-    # wandb.config.update(args)
-    train_data = datasets_for_part_2(args)
+    wandb.init(project=args.Project, entity="surgical_data_science", mode=args.wandb_mode)  # logging to wandb
+    wandb.config.update(args)
+    train_data,test_data, unk_node = datasets_for_part_2(args)
     # full_dataset, val_labels, test_labels = datasets_for_part_2(args)
-    # train_samples =list(range(20))
-    # train_samples = [0] #OVERFIT
+    train_samples =list(train_data.keys())
     # model = Net_with_embedding(dataset=None,args=args) if args.embedding_model=='torch' else Net(dataset=None,args=args)
-    # model = Net(dataset=None,args=args)
+    model = Net(dataset=None,args=args)
     # model = MLP(dataset=None,args=args)
     # total_params = sum(p.numel() for p in model.parameters())
     # print(f'{total_params:,} total parameters.')
     # total_trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     # print(f'{total_trainable_params:,} training parameters.')
     # print(model)
-    # model.load_state_dict(torch.load(os.path.join(args.files_dir,args.model)))
-    # optimizer = torch.optim.Adam(params=model.parameters(), lr=args.lr)
-    # trainer = Train_next_step_pred(model,optimizer=None,args=args,train_data=train_data, full_training_dataset=full_dataset,
-    #                                val_labels= val_labels,test_labels=test_labels,
-    #                                embedding_dir=os.path.join(args.files_dir,args.load_embeddings))
-    # best_val_acc = best_test_acc = best_epoch = best_val_loss = best_test_loss = 0
-    # best_loss = np.float('inf')
-    # best_acc = best_loss_epoch = best_acc_epoch = 0
-    # for epoch in range(args.num_epochs):
-    #     random.shuffle(train_samples)
-    #     train_epoch_losses,train_epoch_accs=trainer.predictions(train_samples)
-    #     print(f'Training Epoch {epoch+1} \n Mean Loss: {train_epoch_losses}, Mean Accuracy: {train_epoch_accs}')
-    #     if train_epoch_losses<best_loss:
-    #         best_loss = train_epoch_losses
-    #         best_loss_epoch=epoch
-    #     if best_acc<train_epoch_accs:
-    #         best_acc = train_epoch_accs
-    #         best_acc_epoch = epoch
-        # if args.loss_calc=='batch':
-        #     val_epoch_losses, val_epoch_accs, test_epoch_losses, test_epoch_accs = trainer.test_batch()
-        # else:
-        #     val_epoch_losses,val_epoch_accs,test_epoch_losses,test_epoch_accs, val_gt_acc, test_gt_acc=trainer.test()
-    #     print(f'Validation Epoch {epoch+1} \n Mean Loss: {val_epoch_losses}, Mean Accuracy: {val_epoch_accs}')
-    #     print(f'Test Epoch {epoch+1} \n Mean Loss: {test_epoch_losses}, Mean Accuracy: {test_epoch_accs}')
-    #     # assert test_gt_acc==1
-    #     # assert val_gt_acc==1
-    #     # print(f'GT CHECK: test: {test_gt_acc}, val: {val_gt_acc}')
-    #     train_results = {"epoch": epoch, "train loss": train_epoch_losses, "Train Acc": train_epoch_accs,
-    #                      "Val Loss": val_epoch_losses, 'Val Acc': val_epoch_accs,"Test Loss": test_epoch_losses,
-    #                      'Test Acc':test_epoch_accs}
-    #     wandb.log(train_results)
-    #     if val_epoch_accs>best_val_acc:
-    #         best_val_acc=val_epoch_accs
-    #         best_test_acc = test_epoch_accs
-    #         best_val_loss = val_epoch_losses
-    #         best_test_loss = test_epoch_losses
-    #         best_epoch = epoch
-    #         best_model = copy.deepcopy(trainer.model)
-    # best_results = {"best_epoch": best_epoch, "Best Val Loss": best_val_loss, 'Best Val Acc': best_val_acc,
-    #                 "Best Test Loss": best_test_loss, 'Best Test Acc': best_test_acc}
-    # wandb.log(best_results)
+    model.load_state_dict(torch.load(os.path.join(args.files_dir,args.model)))
+    trainer = Train_next_step_pred(model,optimizer=None,args=args,train_data=train_data,unk_node=unk_node)
+    best_test_acc  = best_train_acc  = best_test_loss_epoch=best_test_acc_epoch= 0
+    best_train_loss = best_test_loss = np.float('inf')
+    steps_no_improve = 0
+    set_seed()
+    for epoch in range(args.num_epochs):
+        random.shuffle(train_samples)
+        train_epoch_losses,train_epoch_accs=trainer.predictions(train_samples)
+        print(f'Training Epoch {epoch+1} \n Mean Loss: {train_epoch_losses}, Mean Accuracy: {train_epoch_accs}')
+        if train_epoch_losses<best_train_loss-5e-3:
+            steps_no_improve=0
+        else:
+            steps_no_improve+=1
+        if train_epoch_losses<best_train_loss:
+            best_train_loss = train_epoch_losses
+            best_train_loss_epoch=epoch
+        if best_train_acc<train_epoch_accs:
+            best_train_acc = train_epoch_accs
+            best_train_acc_epoch = epoch
+        test_loss,test_acc=trainer.test()
+        print(f'Test Epoch {epoch+1} \n Mean Loss: {test_loss}, Mean Accuracy: {test_acc}')
+        if test_loss<best_test_loss:
+            best_test_loss = test_loss
+            best_test_loss_epoch=epoch
+        if best_test_acc<test_acc:
+            best_test_acc = test_acc
+            best_test_acc_epoch = epoch
+        test_loss,test_acc=trainer.test()
+        train_results = {"epoch": epoch, "train loss": train_epoch_losses, "Train Acc": train_epoch_accs,
+                         "Test Loss": test_loss,'Test Acc':test_acc}
+        wandb.log(train_results)
+        if steps_no_improve>=args.early_stop:
+            break
+    best_results = {"best_train_loss": best_train_loss, "best_train_loss_epoch": best_train_loss_epoch,
+                    'best_train_acc': best_train_acc,"best_train_acc_epoch": best_train_acc_epoch,
+                    'best_test_loss': best_test_loss, 'best_test_loss_epoch':best_test_loss_epoch,
+                    'best_test_acc':best_test_acc, "best_test_acc_epoch":best_test_acc_epoch}
+    wandb.log(best_results)
     # torch.save(best_model.state_dict(), os.path.join(wandb.run.dir, f'Part2_{args.graph_worker}'))
-    print(f'best_loss:{best_loss} on epoch {best_loss_epoch}')
-    print(f'best_loss:{best_acc} on epoch {best_acc_epoch}')
+    print(f'best_train_loss:{best_train_loss} on epoch {best_train_loss_epoch}')
+    print(f'best_train_acc:{best_train_acc} on epoch {best_train_acc_epoch}')
+    print(f'best_test_loss:{best_test_loss} on epoch {best_test_loss_epoch}')
+    print(f'best_test_acc:{best_test_acc} on epoch {best_test_acc_epoch}')

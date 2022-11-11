@@ -1,12 +1,11 @@
-program: LinkPred_part2.py
+program: LinkPred_part2_new_ver.py
 method: bayes
 metric:
-  name: best val acc
+  name: best_test_acc
   goal: maximize
 parameters:
   p1_run_name:
-    values: ['6gwrxooj', 'grtacxzl', '19fk13ln', 'a732w10f', 'b25f3i2q', 'j2t5h5ul',
-             'nrsqofhg', 'nkqfz3ho', 'ip19zll4', 'ydcvyv46']
+    values: ['5nmt5mjz', 'pslhay65', 'fihmrns0', 'elznjvsn', '9xvpfxgs', 'd1ngf5p9']
   lr:
     min: 0.00001
     max: 0.2

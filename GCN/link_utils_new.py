@@ -268,6 +268,7 @@ def build_Graph_from_dfs_helper_partial(surgeries, hands,state_to_node,withselfl
             else:
                 transitions[key] = 1
         labels = []
+        print('last key: ',key)
         for i_stage in range(partial_size, len(processed_df)):
             state_row = processed_df.loc[i_stage]
             state = tuple(int(state_row[x].item()) for x in hands)
@@ -276,27 +277,52 @@ def build_Graph_from_dfs_helper_partial(surgeries, hands,state_to_node,withselfl
     return transitions, nodes, labels
 
 def datasets_for_part_2(args):
-    train_data = {}
-    embedding_dir = os.path.join(args.files_dir, args.load_embeddings)
-    val_weights = test_weights = None
-    hands = HANDS[args.graph_worker]
-    tuple_len = len(hands)
-    f = open(f"state_to_node_{args.graph_worker}_new.pkl", "rb")
-    state_to_node=pickle.load(f)
-    f = open(f"node_to_state_{args.graph_worker}_new.pkl", "rb")
-    node_to_state=pickle.load(f)
-    train_surgeries =SURGERY_GROUPS_BORIS['train']+SURGERY_GROUPS_BORIS['val']
-    unk_node = max(list(node_to_state.keys()))+1
-    for i, surgery in enumerate(train_surgeries):  ##Leaves 1 Surgery out, for training the network
-        cur_surgeries = train_surgeries[:i] + train_surgeries[i + 1:]
-        transitions, nodes, labels = build_Graph_from_dfs_helper_partial(cur_surgeries, hands, state_to_node, False,
-                                                                 args.graph_worker,train_surgeries[i],args.partial_start)
-        #TODO: add UNK node+embeddings
-        G = build_graph_from_transitions(nodes+[unk_node], transitions)
-        data = create_dataset(G=G, args=args, load_embeddings=embedding_dir)
-        data.weight = data.weight.to(torch.float32)
-        train_data[i]={'data':data,'labels':labels}
-    return train_data
+    data_path=f"train_data/{args.p1_run_name}"
+    train_fname = os.path.join(data_path,'train_data')
+    test_fname = os.path.join(data_path,'test_data')
+    if os.path.exists(data_path):
+        print('loading datasets')
+        f = open(train_fname, "rb")
+        train_data = pickle.load(f)
+        f = open(test_fname, "rb")
+        test_data = pickle.load(f)
+        f = open(f"node_to_state_{args.graph_worker}_new.pkl", "rb")
+        node_to_state=pickle.load(f)
+        unk_node = max(list(node_to_state.keys()))+1
+    else:
+        os.mkdir(data_path)
+        print('creating dataset')
+        train_data = {}
+        embedding_dir = os.path.join(args.files_dir, args.load_embeddings)
+        hands = HANDS[args.graph_worker]
+        f = open(f"state_to_node_{args.graph_worker}_new.pkl", "rb")
+        state_to_node=pickle.load(f)
+        f = open(f"node_to_state_{args.graph_worker}_new.pkl", "rb")
+        node_to_state=pickle.load(f)
+        unk_node = max(list(node_to_state.keys()))+1
+        train_surgeries =SURGERY_GROUPS_BORIS['train']+SURGERY_GROUPS_BORIS['val']
+        for i, surgery in enumerate(train_surgeries):  ##Leaves 1 Surgery out, for training the network
+            cur_surgeries = train_surgeries[:i] + train_surgeries[i + 1:]
+            transitions, nodes, labels = build_Graph_from_dfs_helper_partial(cur_surgeries, hands, state_to_node, False,
+                                                                     args.graph_worker,train_surgeries[i],args.partial_start)
+            G = build_graph_from_transitions(nodes+[unk_node], transitions)
+            data = create_dataset(G=G, args=args, load_embeddings=embedding_dir,unk=unk_node)
+            data.weight = data.weight.to(torch.float32)
+            train_data[i]={'data':data,'labels':labels}
+        test_data = {}
+        for i,surgery in enumerate(SURGERY_GROUPS_BORIS['test']):
+            transitions, nodes, labels = build_Graph_from_dfs_helper_partial(train_surgeries, hands, state_to_node, False,
+                                                                     args.graph_worker,surgery,args.partial_start)
+            G = build_graph_from_transitions(nodes+[unk_node], transitions)
+            data = create_dataset(G=G, args=args, load_embeddings=embedding_dir,unk=unk_node)
+            data.weight = data.weight.to(torch.float32)
+            test_data[i]={'data':data,'labels':labels}
+        f = open(train_fname, "wb")
+        pickle.dump(train_data,f)
+        f = open(test_fname, "wb")
+        pickle.dump(test_data,f)
+    return train_data, test_data, unk_node
+
 
 def build_graph_from_transitions(nodes,transitions,edges=None):
     G = nx.DiGraph()
@@ -309,7 +335,7 @@ def build_graph_from_transitions(nodes,transitions,edges=None):
         G.add_weighted_edges_from([(source, target, transitions[edge])])
     return G
 
-def create_dataset(G,args=None,load_embeddings=None):
+def create_dataset(G,args=None,load_embeddings=None,unk=None):
     if args.embedding_model=='Cora':
         data = create_dataset_from_graph_cora(G)
     elif args.embedding_model=='DeepWalk':
@@ -320,6 +346,9 @@ def create_dataset(G,args=None,load_embeddings=None):
         else:
             embeddings = create_embeddings(G,args)
         node_ids = {i:i for i in G.nodes}
+        if unk is not None:
+            unk_embedding = np.mean([x for x in embeddings.values()], axis=0)
+            embeddings[unk]=unk_embedding
         nx.set_node_attributes(G, embeddings, "x")
         nx.set_node_attributes(G, node_ids, "id")
         data = from_networkx(G)
