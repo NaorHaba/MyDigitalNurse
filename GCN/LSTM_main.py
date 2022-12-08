@@ -22,38 +22,52 @@ VAL_PATH = 'DataFiles/filtered_val_df_0705_LSTM_new.csv'
 TEST_PATH = 'DataFiles/filtered_test_df_0705_LSTM_new.csv'
 
 
+ARGS_DICT = {
+    'truesweep': {'time_series_model':'GRU','add_features':'None','num_layers':2,'hidden_dim':128,
+             'dropout':0.05378219434578246, 'lr':0.007167994247203912,'batch_size':8},
+    'playful': {'time_series_model': 'GRU', 'add_features': 'timestamp', 'num_layers': 2, 'hidden_dim': 128,
+             'dropout': 0.06004744594290896, 'lr': 0.003592809947211788, 'batch_size':5},
+    'dauntless': {'time_series_model': 'LSTM', 'add_features': 'positional', 'num_layers': 3, 'hidden_dim': 128,
+             'dropout': 0.040054728598359395, 'lr': 0.017945374777689625,'batch_size':5},
+    'exalted': {'time_series_model': 'LSTM', 'add_features': 'timestamp', 'num_layers': 3, 'hidden_dim': 128,
+                  'dropout': 0.19902126894542096, 'lr': 0.007940198975443444, 'batch_size': 1},
+    'trim': {'time_series_model': 'GRU', 'add_features': 'timestamp', 'num_layers': 3, 'hidden_dim': 128,
+                  'dropout': 0.13817077508581418, 'lr': 0.003321543121275328, 'batch_size': 5},
+}
+
+def edit_args(args):
+    args_dict = ARGS_DICT[args.model_name]
+    args.time_series_model = args_dict['time_series_model']
+    args.add_features = args_dict['add_features']
+    args.num_layers = args_dict['num_layers']
+    args.dropout = args_dict['dropout']
+    args.lr = args_dict['lr']
+    args.batch_size = args_dict['batch_size']
+    return args
 
 def parsing():
-    dt_string = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
     parser = argparse.ArgumentParser()
-    parser.add_argument('--tune_name', default="LSTMS")
-
     parser.add_argument('--wandb_mode', choices=['online', 'offline', 'disabled'], default='online', type=str)
     parser.add_argument('--project', default="RNN_BORIS", type=str)
     parser.add_argument('--graph_worker', choices=['surgeon', 'assistant','both'], default='surgeon')
-
+    parser.add_argument('--model_name', default='truesweep', type=str)
+    parser.add_argument('--starting_point', default=2,type=int)
     # parser.add_argument('--entity', default="surgical_data_science", type=str)
 
-    parser.add_argument('--time_series_model', choices=['LSTM','GRU'], default='LSTM', type=str)
+    parser.add_argument('--time_series_model', choices=['LSTM','GRU'], default='GRU', type=str)
+    # parser.add_argument('--add_features', default='positional_timestamp', type=str)
+    parser.add_argument('--add_features', default='None', type=str)
+    parser.add_argument('--features', default='2hands',choices=['1hot','label','2hands'], type=str)
 
-    parser.add_argument('--num_layers', default=4, type=int)
-    parser.add_argument('--hidden_dim', default=528, type=int)
+    parser.add_argument('--num_layers', default=2, type=int)
+    parser.add_argument('--hidden_dim', default=128, type=int)
     parser.add_argument('--bidirectional', default=False, type=bool)
-    parser.add_argument('--dropout', default=0.2, type=float)
+    parser.add_argument('--dropout', default=0.05378219434578246, type=float)
     parser.add_argument('--input_dim', default=25, type=int)
     parser.add_argument('--early_stop', default=7, type=int)
-
-    parser.add_argument('--eval_rate', default=1, type=int)
-    parser.add_argument('--batch_size', default=128, type=int)
-    parser.add_argument('--lr', default=0.001, type=float)
-    parser.add_argument('--num_epochs', default=50, type=int)
-
-    # parser.add_argument('--imputation', choices=['iterative','mean','median'], default='iterative', type=str)
-    # parser.add_argument('--window', default=5, type=int)
-    # parser.add_argument('--seq_len', default=10, type=int)
-    # parser.add_argument('--sample', choices=['over','under','overunder'], default='overunder', type=str)
-    # parser.add_argument('--over_sample_rate', default='0.3449', type=float)
-    # parser.add_argument('--under_sample_rate', default='0.5034', type=float)
+    parser.add_argument('--batch_size', default=2, type=int)
+    parser.add_argument('--lr', default=0.01, type=float)
+    parser.add_argument('--num_epochs', default=100, type=int)
 
     args = parser.parse_args()
     assert 0 <= args.dropout <= 1
@@ -69,15 +83,23 @@ def set_seed(seed=42):
 
 
 args = parsing()
+args = edit_args(args)
 set_seed()
-logger.info(args)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-ds_train = Dataset('train', args.graph_worker)
+num_add_features = len(args.add_features.split('_')) if args.add_features!='None' else 0
+args.input_dim =num_add_features + (25 if args.features=='1hot' else 1 if args.features=='label' else 2)
+logger.info(args)
+num_classes_list = [5,5] if args.features=='2hands' else [25]
+ds_train = Dataset('train', args.graph_worker,args.features,args.add_features)
 dl_train = DataLoader(ds_train, batch_size=args.batch_size, collate_fn=collate_inputs, shuffle=True)
-ds_val = Dataset('val',args.graph_worker)
-dl_val = DataLoader(ds_val, batch_size=args.batch_size, collate_fn=collate_inputs, shuffle=False)
-model = RNN_Model(rnn_type=args.time_series_model,bidirectional=args.bidirectional,
-                  input_dim = args.input_dim,hidden_dim = args.hidden_dim,dropout= args.dropout,num_layers =args.num_layers )
+# ds_val = Dataset('val',args.graph_worker,args.features, args.add_features)
+# dl_val = DataLoader(ds_val, batch_size=1, shuffle=False)
+ds_test = Dataset('test',args.graph_worker,args.features,args.add_features)
+dl_test = DataLoader(ds_test, batch_size=1, shuffle=False)
+model = RNN_Model(rnn_type=args.time_series_model,bidirectional=args.bidirectional,device=device,
+                  input_dim = args.input_dim,hidden_dim = args.hidden_dim,dropout= args.dropout,
+                  num_layers =args.num_layers, num_classes_list=num_classes_list)
+print(model)
 trainer = Trainer(model,device=device, early_stop = args.early_stop)
 # eval_results, train_results = \
-trainer.train(dl_train,dl_val,args.num_epochs, args.lr,args)
+trainer.train(dl_train,dl_test,args.num_epochs, args.lr,args)

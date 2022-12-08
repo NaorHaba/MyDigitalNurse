@@ -36,11 +36,12 @@ class RNN_Model(nn.Module):
     RNN model base class
     Supports GRU or LSTM layers
     """
-    def __init__(self, rnn_type, input_dim, hidden_dim=64, bidirectional=False, dropout=0.4, num_layers=2, num_classes=25):
+    def __init__(self, rnn_type, input_dim, device, hidden_dim=64, bidirectional=False, dropout=0.4, num_layers=2, num_classes_list=[25]):
         super(RNN_Model, self).__init__()
 
         self.hidden_dim = hidden_dim
         self.dropout = torch.nn.Dropout(dropout)
+        self.device=device
         if rnn_type == "LSTM":
             self.rnn = nn.LSTM(input_dim, hidden_dim, batch_first=True, bidirectional=bidirectional,
                                num_layers=num_layers, dropout=dropout)
@@ -48,9 +49,12 @@ class RNN_Model(nn.Module):
             self.rnn = nn.GRU(input_dim, hidden_dim, batch_first=True, bidirectional=bidirectional,
                               num_layers=num_layers, dropout=dropout)
         # The linear layer that maps from hidden state space to tag space
-        self.output = nn.Linear(hidden_dim * 2 if bidirectional else hidden_dim, num_classes)
+        self.output_heads = nn.ModuleList([copy.deepcopy(
+            nn.Linear(hidden_dim * 2 if bidirectional else hidden_dim, num_classes_list[s]))
+            for s in range(len(num_classes_list))])
 
-    def forward(self, rnn_inputs, lengths, mask):
+
+    def forward(self, rnn_inputs, lengths, mask=None):
         rnn_inputs = rnn_inputs.float()
 
         packed_input = torch.nn.utils.rnn.pack_padded_sequence(rnn_inputs, lengths=lengths, batch_first=True,
@@ -61,8 +65,10 @@ class RNN_Model(nn.Module):
                                                                                             batch_first=True)
         unpacked_rnn_out = self.dropout(unpacked_rnn_out)
         last_out = torch.stack([unpacked_rnn_out[i, unpacked_rnn_out_lengths[i] - 1, :] for i in range(len(lengths))])
-        return self.output(last_out)
-        # return self.output(unpacked_rnn_out)
+        outputs=[]
+        for output_head in self.output_heads:
+            outputs.append(output_head(last_out))
+        return outputs        # return self.output(unpacked_rnn_out)
 
 
 #
@@ -70,33 +76,77 @@ class Dataset(Dataset):
     """
     Dataset for surgeries.
     """
-    def __init__(self, group: str, graph_worker:str):
-        self.surgeries_list = SURGERY_GROUPS_BORIS[group]
+    def __init__(self, group: str, graph_worker:str, features:str,add_features:str):
+        if '&' in group:
+            self.surgeries_list = SURGERY_GROUPS_BORIS[group.split('&')[0]]+SURGERY_GROUPS_BORIS[group.split('&')[1]]
+        else:
+            self.surgeries_list = SURGERY_GROUPS_BORIS[group]
+        print('dataset:', group)
+        print('size:', len(self.surgeries_list))
         self.hands = HANDS[graph_worker]
         f = open(f"state_to_node_{len(self.hands)}.pkl", "rb")
         self.state_to_node = pickle.load(f)
+        self.n = len(self.state_to_node)
         self.graph_worker = graph_worker
-        self.data_dict()
+        self.add_features = add_features.split('_')
+        self.features = features
+        if self.features=='2hands':
+            self.data_dict_hands()
+        else:
+            self.vector_func = self.onehot if features=='1hot' else self.label
+            self.data_dict_states()
 
 
     def __getitem__(self, item):
         surgery_data = self.data[item]['features']
-        label = self.data[item]['label']
-        return surgery_data, label
+        labels = self.data[item]['labels']
+        sur_id = self.data[item]['sur_id']
+        return surgery_data, labels,sur_id
 
     def __len__(self):
         return len(self.data)
 
-    def data_dict(self):
+    def onehot(self,state):
+        return [0.] * state + [1.] + [0.] * (self.n - 1 - state)
+
+    def label(self, state):
+        return [state.item()]
+
+    def data_dict_states(self):
         self.data = []
         for i,sur in enumerate(self.surgeries_list):
+            tmp_dict = {}
             states, times, stamps = self.create_labels_from_surgery(sur)
             labels = torch.tensor(states[1:])
             # features = [torch.tensor([0.] * state + [1.] + [0.] * (24 - state) + [times[i]] + [stamps[i]]) for i, state in
             #         enumerate(states[:-1])] #1hot+time diff + timestamp
-            features = torch.stack([torch.tensor([0.] * state + [1.] + [0.] * (24 - state)) for state in states[:-1]]) #1hot
-            for j, label in enumerate(labels):
-                self.data+=[{'features':features[:j+1,:], 'label':label}]
+            if len(self.add_features)==2:
+                features = torch.stack([torch.tensor(self.vector_func(state)+[pos]+[stamps[pos]]) for pos,state in enumerate(states[:-1])])
+            elif 'positional' in self.add_features:
+                features = torch.stack([torch.tensor(self.vector_func(state)+[pos]) for pos,state in enumerate(states[:-1])])
+            elif 'timestamp' in self.add_features:
+                features = torch.stack([torch.tensor(self.vector_func(state)+[stamps[pos]]) for pos,state in enumerate(states[:-1])])
+            else:
+                features = torch.stack([torch.tensor(self.vector_func(state)) for pos,state in enumerate(states[:-1])])
+            self.data+=[{'features':features, 'labels':labels.unsqueeze(1),'sur_id':i}]
+
+    def data_dict_hands(self):
+        self.data = []
+        for i,sur in enumerate(self.surgeries_list):
+            tmp_dict = {}
+            states, times, stamps = self.create_labels_from_surgery(sur)
+            labels = torch.tensor(states[1:])
+            # features = [torch.tensor([0.] * state + [1.] + [0.] * (24 - state) + [times[i]] + [stamps[i]]) for i, state in
+            #         enumerate(states[:-1])] #1hot+time diff + timestamp
+            if len(self.add_features)==2:
+                features=torch.stack([torch.tensor([state[0], state[1], pos, stamps[pos]]) for pos, state in enumerate(states[:-1])])
+            elif 'positional' in self.add_features:
+                features=torch.stack([torch.tensor([state[0], state[1], pos]) for pos, state in enumerate(states[:-1])])
+            elif 'timestamp' in self.add_features:
+                features=torch.stack([torch.tensor([state[0], state[1], pos]) for pos, state in enumerate(states[:-1])])
+            else:
+                features=torch.stack([torch.tensor([state[0], state[1]]) for pos, state in enumerate(states[:-1])])
+            self.data+=[{'features':features, 'labels':labels,'sur_id':i}]
 
 
     def create_labels_from_surgery(self, surgery):
@@ -108,11 +158,14 @@ class Dataset(Dataset):
         time = []
         for i, row in processed_df.iterrows():
             state = tuple(int(row[x].item()) for x in self.hands)
-            states += [self.state_to_node[state]]
+            if self.features=='2hands':
+                states+=[state]
+            else:
+                states += [self.state_to_node[state]]
             time_diffs += [row.Time_Diff]
             time += [row.Time]
             # states += [state_to_node[state]] * 1 if not withselfloops else [state_to_node[state]] * int(row.FPS*row.Shift_Time)
-        return torch.tensor(states), torch.tensor(time_diffs), torch.tensor(time_diffs)
+        return torch.tensor(states), torch.tensor(time_diffs), torch.tensor(time)
 
 
 def collate_inputs(batch):
@@ -130,12 +183,13 @@ def collate_inputs(batch):
         input_lengths.append(sample_features.shape[0])
         batch_features.append(sample_features)
         batch_labels.append(sample[1])
+        batch_ids.append(sample[2])
         # pad
-    batch = torch.nn.utils.rnn.pad_sequence(batch_features, batch_first=True)
-    # labels = torch.nn.utils.rnn.pad_sequence(batch_labels, batch_first=True, padding_value=-100)
-    labels = torch.tensor(batch_labels)
+    batch = torch.nn.utils.rnn.pad_sequence(batch_features, batch_first=True,padding_value=-1)
+    labels = torch.nn.utils.rnn.pad_sequence(batch_labels, batch_first=True, padding_value=-100)
+    # labels = torch.tensor(batch_labels)
     # if len(batch)==1:
     #     labels.unsqueeze(0)
     # compute mask
-    input_masks = batch != 0
-    return batch.double(), labels.type(torch.LongTensor), torch.tensor(input_lengths), input_masks
+    input_masks = batch !=-1
+    return batch.double(), labels.type(torch.LongTensor), torch.tensor(input_lengths), input_masks,batch_ids

@@ -27,6 +27,12 @@ MODELS ={
 "d1ngf5p9":{'activation': 'lrelu', 'embedding_dim': 256, 'embedding_model': 'DeepWalk', 'first_conv_f': 256, 'num_layers': 5, 'dir': 'run-20221110_081727-d1ngf5p9', 'p1_model_type': 'MDN-IPG-BORIS-NoSelfLoops'}
     }
 
+FINAL_HP = {
+    'd1ngf5p9':{'loss_calc':'surgery','lr':0.02195912366641873},#charmed-sweep-380
+    '5nmt5mjz':{'loss_calc':'surgery','lr':0.049403153223501625},#treasured-sweep-107
+    'elznjvsn': {'loss_calc': 'surgery', 'lr': 0.0639265835039942}  # lilac-sweep-481
+              }
+
 def set_seed(seed=42):
     random.seed(seed)
     np.random.seed(seed)
@@ -41,10 +47,10 @@ def parsing():
     parser.add_argument('--Project', default='MDN-NextStep-BORIS_new_1011', type=str)
 
     parser.add_argument('--graph_worker', choices=['surgeon', 'assistant','both'], default='surgeon')
-    parser.add_argument('--p1_run_name', default='9xvpfxgs', type=str)
+    parser.add_argument('--p1_run_name', default='5nmt5mjz', type=str)
     parser.add_argument('--p1_model_type', choices=['MDN-IPG-BORIS', 'MDN-IPG-BORIS-NoSelfLoops'], default='MDN-IPG-BORIS')
-    parser.add_argument('--train_type', choices=['ForcedNoSelfLoops', 'NoSelfLoops','FullGraph'], default='NoSelfLoops')
-    parser.add_argument('--partial_start', default=5, type=int)
+    parser.add_argument('--train_type', choices=['ForcedNoSelfLoops', 'NoSelfLoops','FullGraph'], default='ForcedNoSelfLoops')
+    parser.add_argument('--partial_start', default=1, type=int)
 
     parser.add_argument('--loss_calc', choices=['surgery', 'node', 'batch'], default='surgery')
     parser.add_argument('--batch_size', default=6, type=int)
@@ -58,7 +64,7 @@ def parsing():
     parser.add_argument('--embedding_dim', default=512, type=int)
     parser.add_argument('--num_epochs', default=500, type=int)
     parser.add_argument('--early_stop', default=10, type=float)
-
+    parser.add_argument('--with_scheduler', default=True, type=bool)
     parser.add_argument('--lr', default=0.12381015946468615, type=float)
     args = parser.parse_args()
     args.load_embeddings = f'train_embeddings_{args.graph_worker}.pkl'
@@ -69,10 +75,10 @@ def parsing():
 
 
 class Train_next_step_pred():
-    def __init__(self,  model:Net,optimizer:torch.optim,train_data,args,unk_node=18):
+    def __init__(self,  model:Net,optimizer:torch.optim,train_data,args,unk_node=18, with_scheduler=False):
         self.model = model
         self.optimizer=  torch.optim.Adam(params=self.model.parameters(), lr=args.lr)
-        self.scheduler = ReduceLROnPlateau(self.optimizer, mode='min', factor=0.005, patience=5, threshold=0.1,
+        self.scheduler = ReduceLROnPlateau(self.optimizer, mode='min', factor=2e-10, patience=4, threshold=0.01,
                                       threshold_mode='abs', verbose=True)
         self.args=args
         self.loss_calc = args.loss_calc
@@ -87,6 +93,7 @@ class Train_next_step_pred():
         self.num_epochs_not_improved = 0
         self.sched_use = 0
         self.unk_node=unk_node
+        self.with_scheduler = with_scheduler
 
     def find_node_idx_in_data(self,ids,node):
         find_idx = (ids == node).nonzero()
@@ -231,7 +238,10 @@ class Train_next_step_pred():
             print('Current Surgery Loss: ', mean_surg_loss, 'Mean Accuracy: ', mean_surg_acc)
             epoch_losses.append(mean_surg_loss)
             epoch_accs.append(mean_surg_acc)
-        return np.mean(epoch_losses),np.mean(epoch_accs)
+        mean_loss = np.mean(epoch_losses)
+        if self.with_scheduler:
+            self.scheduler.step(mean_loss)
+        return mean_loss,np.mean(epoch_accs)
 
 
 def edit_args(args):
@@ -243,6 +253,8 @@ def edit_args(args):
     args.num_layers = model_dic['num_layers']
     args.files_dir = f"/data/home/liory/MyDigitalNurse/GCN/wandb/{model_dic['dir']}/files/"
     args.p1_model_type = model_dic['p1_model_type']
+    args.loss_calc = FINAL_HP[args.p1_run_name]['loss_calc']
+    args.lr = FINAL_HP[args.p1_run_name]['lr']
     return args
 
 if __name__ == "__main__":
@@ -263,7 +275,8 @@ if __name__ == "__main__":
     # print(f'{total_trainable_params:,} training parameters.')
     # print(model)
     model.load_state_dict(torch.load(os.path.join(args.files_dir,args.model)))
-    trainer = Train_next_step_pred(model,optimizer=None,args=args,train_data=train_data,unk_node=unk_node)
+    trainer = Train_next_step_pred(model,optimizer=None,args=args,train_data=train_data,unk_node=unk_node,
+                                   with_scheduler=args.with_scheduler)
     best_test_acc  = best_train_acc  = best_test_loss_epoch=best_test_acc_epoch= 0
     best_train_loss = best_test_loss = np.float('inf')
     steps_no_improve = 0
@@ -272,13 +285,12 @@ if __name__ == "__main__":
         random.shuffle(train_samples)
         train_epoch_losses,train_epoch_accs=trainer.predictions(train_samples)
         print(f'Training Epoch {epoch+1} \n Mean Loss: {train_epoch_losses}, Mean Accuracy: {train_epoch_accs}')
-        if train_epoch_losses<best_train_loss-5e-3:
-            steps_no_improve=0
-        else:
-            steps_no_improve+=1
         if train_epoch_losses<best_train_loss:
+            steps_no_improve=0
             best_train_loss = train_epoch_losses
             best_train_loss_epoch=epoch
+        else:
+            steps_no_improve+=1
         if best_train_acc<train_epoch_accs:
             best_train_acc = train_epoch_accs
             best_train_acc_epoch = epoch

@@ -166,5 +166,5 @@ if __name__ == "__main__":
     print(f'Best Results \n Best Epoch:{best_epoch} Best Val Perf: {best_val_perf}, Best test for best val :{test_perf}')
     wandb.log({"best epoch": best_epoch, "best val acc": best_val_perf,
                          "best test": test_perf, 'best val thresh':val_acc_thresh,'best test thresh':best_test_threst})
-    # z = trainer.model.encode()
-    # final_edge_index = trainer.model.decode_all(z)
+    z = trainer.model.encode()
+    final_edge_index = trainer.model.decode_all(z)

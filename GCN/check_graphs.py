@@ -2,7 +2,7 @@ import pandas as pd
 import os
 import sys
 import argparse
-from link_utils_new import build_Graph_from_dfs_helper, create_labels_from_surgery,build_graph_from_transitions
+from link_utils_new import build_Graph_from_dfs_helper, create_labels_from_surgery,build_graph_from_transitions, create_mappings_2
 import pickle
 from netrd.distance import Hamming
 from scipy.spatial.distance import hamming
@@ -11,7 +11,7 @@ import numpy as np
 def parsing():
     parser = argparse.ArgumentParser()
     parser.add_argument('--videos_path', default='/data/shared-data/scalpel/kristina/data/detection/usage/by video')
-    parser.add_argument('--graph_worker', choices=['surgeon', 'assistant','both'], default='surgeon')
+    parser.add_argument('--graph_worker', choices=['surgeon', 'assistant','both'], default='both')
     parser.add_argument('--wandb_mode', choices=['online', 'offline', 'disabled'], default='disabled', type=str)
     parser.add_argument('--Project', choices=['MDN-IPG-BORIS', 'MDN-IPG-BORIS-NoSelfLoops'], default='MDN-IPG-BORIS-NoSelfLoops', type=str)
 
@@ -64,6 +64,7 @@ SURGERY_GROUPS_BORIS = {
 # def build_Graph_from_dfs_helper(surgeries, hands,state_to_node,withselfloops,graph_worker):
 
 def load_data(save_path,args):
+    surgeries = SURGERY_GROUPS_BORIS['train'] + SURGERY_GROUPS_BORIS['val'] + SURGERY_GROUPS_BORIS['test']
     if os.path.exists(save_path):
         print('load')
         f = open(save_path, "rb")
@@ -71,11 +72,13 @@ def load_data(save_path,args):
     else:
         data={}
         hands = HANDS[args.graph_worker]
-        f = open(f"node_to_state_{args.graph_worker}_new.pkl", "rb")
-        node_to_state = pickle.load(f)
-        f = open(f"state_to_node_{args.graph_worker}_new.pkl", "rb")
-        state_to_node = pickle.load(f)
-        surgeries = SURGERY_GROUPS_BORIS['train'] + SURGERY_GROUPS_BORIS['val'] + SURGERY_GROUPS_BORIS['test']
+        if os.path.exists(f"node_to_state_{args.graph_worker}_new.pkl"):
+            f = open(f"node_to_state_{args.graph_worker}_new.pkl", "rb")
+            node_to_state = pickle.load(f)
+            f = open(f"state_to_node_{args.graph_worker}_new.pkl", "rb")
+            state_to_node = pickle.load(f)
+        else:
+            state_to_node, node_to_state=create_mappings_2(surgeries,hands,args.graph_worker)
         for i, surgery in enumerate(surgeries):  ##Leaves 1 Surgery out, for training the network
             cur_surgeries = surgeries[:i] + surgeries[i + 1:]
             all_transitions, all_nodes = build_Graph_from_dfs_helper(cur_surgeries, hands, state_to_node, False,
@@ -121,18 +124,23 @@ def calc_hamming_labels(i,labels, all_data):
 
 if __name__=='__main__':
     args = parsing()
-    path = '/data/home/liory/MyDigitalNurse/GCN/checkgraphs.pkl'
+    # path = '/data/home/liory/MyDigitalNurse/GCN/checkgraphs.pkl'
+    path = '/data/home/liory/MyDigitalNurse/GCN/checkgraphs_both.pkl'
     data= load_data(path,args)
     graph_hammings = []
     label_hammings = []
     dist_obj = Hamming()
-    for i, i_dic in data.items():
-        full_graph = i_dic['full graph']
-        i_graph =  i_dic['sur graph']
-        i_graph.add_nodes_from([x for x in full_graph.nodes if x not in i_graph.nodes])
-        full_graph.add_nodes_from([x for x in i_graph.nodes if x not in full_graph.nodes])
-        graph_hammings.append(dist_obj(full_graph,i_graph))
-        label_hammings.append(calc_hamming_labels(i,i_dic['sur_labels'][0],data))
-    print('mean graph hammings: ', np.mean(graph_hammings))
-    print('mean seq hammings: ', np.mean(np.mean([x for x in label_hammings])))
-    print(data)
+    length = [len(x['sur_labels'][0]) for x in data.values()]
+    print(np.min(length))
+    print(np.max(length))
+    print(np.mean(length))
+    # for i, i_dic in data.items():
+    #     full_graph = i_dic['full graph']
+    #     i_graph =  i_dic['sur graph']
+    #     i_graph.add_nodes_from([x for x in full_graph.nodes if x not in i_graph.nodes])
+    #     full_graph.add_nodes_from([x for x in i_graph.nodes if x not in full_graph.nodes])
+    #     graph_hammings.append(dist_obj(full_graph,i_graph))
+    #     label_hammings.append(calc_hamming_labels(i,i_dic['sur_labels'][0],data))
+    # print('mean graph hammings: ', np.mean(graph_hammings))
+    # print('mean seq hammings: ', np.mean(np.mean([x for x in label_hammings])))
+    print('DONE')

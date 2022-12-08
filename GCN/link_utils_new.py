@@ -206,6 +206,27 @@ def read_train_data(i,args):
     data = create_dataset(G=Graph, args=args, load_embeddings=embedding_dir)
     return data,labels
 
+def create_mappings_2(surgeries, hands, graph_worker):
+    state_to_node = {}
+    node_to_state = {}
+    index=0
+    for sur in surgeries:
+        df = pd.read_csv(os.path.join(BORIS,sur), skiprows=15)
+        processed_df = process_boris_df(df,graph_worker)
+        for i_stage in range(len(processed_df)):
+            row = processed_df.loc[i_stage]
+            state = tuple(int(row[x].item()) for x in hands)
+            if state not in state_to_node.keys():
+                state_to_node[state]=index
+                node_to_state[index]=state
+                index+=1
+    f = open(f"node_to_state_{graph_worker}_new.pkl", "wb")
+    pickle.dump(node_to_state, f)
+    f = open(f"state_to_node_{graph_worker}_new.pkl", "wb")
+    pickle.dump(state_to_node, f)
+    return state_to_node, node_to_state
+
+
 
 def build_Graph_from_dfs_helper(surgeries, hands,state_to_node,withselfloops,graph_worker):
     transitions = {}
@@ -218,6 +239,15 @@ def build_Graph_from_dfs_helper(surgeries, hands,state_to_node,withselfloops,gra
             target_row = processed_df.loc[i_stage+1]
             source = tuple(int(source_row[x].item()) for x in hands)
             target = tuple(int(target_row[x].item()) for x in hands)
+            possible=[]
+            if source[0]==target[0] and source[1]!=target[1] and (source[1]==0 or target[1]==0):
+                possible.append(f'{source}->{target}')
+            elif source[1]==target[1] and source[0]!=target[0] and (source[0]==0 or target[0]==0):
+                possible.append(f'{source}->{target}')
+            elif ((source[0]==0 and target[0]!=0) or (source[0]!=0 and target[0]==0)) and ((source[1]==0 and target[1]!=0) or (source[1]!=0 and target[1]==0)):
+                possible.append(f'{source}->{target}')
+            else:
+                print('problem')
             if source==target:
                 print('P')
             source_node = state_to_node[source]
@@ -277,7 +307,7 @@ def build_Graph_from_dfs_helper_partial(surgeries, hands,state_to_node,withselfl
     return transitions, nodes, labels
 
 def datasets_for_part_2(args):
-    data_path=f"train_data/{args.p1_run_name}"
+    data_path=f"train_data/{args.p1_run_name}_{args.partial_start}"
     train_fname = os.path.join(data_path,'train_data')
     test_fname = os.path.join(data_path,'test_data')
     if os.path.exists(data_path):

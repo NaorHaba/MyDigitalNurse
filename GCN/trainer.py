@@ -28,7 +28,7 @@ class Trainer:
         self.ce = nn.CrossEntropyLoss(ignore_index=-100) #loss
         self.early_stop = early_stop
 
-    def train(self, train_data_loader,test_data_loader, num_epochs, learning_rate,args):
+    def train(self, train_data_loader,test_data_loader,num_epochs, learning_rate,args):
         """
         :param train_data_loader:
         :param test_data_loader:
@@ -40,12 +40,13 @@ class Trainer:
         :return: results for each epoch and each dataset
         """
         number_of_seqs = len(train_data_loader.sampler)
+        print('num seqs ',number_of_seqs)
         number_of_batches = len(train_data_loader.batch_sampler)
-        wandb.init(project="lab1_lstm", entity="labteam",mode=args.wandb_mode) #logging to wandb
+        wandb.init(project="RNN_BORIS_NEW_412", entity="surgical_data_science",mode=args.wandb_mode) #logging to wandb
         wandb.config.update(args)
-        self.model.train()
-        best_results = {'val acc': 0, 'val loss': np.float('inf')}
+        best_results = {'val acc': 0, 'val acc per surgery': 0,'val loss': np.float('inf')}
         self.model.to(self.device)
+        self.model.train()
         optimizer = optim.Adam(self.model.parameters(), lr=learning_rate)
         steps_no_improve = 0
         min_train_loss = np.float('inf')
@@ -54,22 +55,38 @@ class Trainer:
             # pbar = tqdm.tqdm(total=number_of_batches)
             epoch_loss = 0
             mean_epoch_acc = 0
-            len_batches = 0
             for batch in tqdm.tqdm(train_data_loader):
-                batch_input, batch_target, lengths, mask = [x.to(self.device) for x in batch]
+                batch_input, batch_target, lengths, mask = [x.to(self.device) for x in batch[:-1]]
+                batch_ids = batch[-1]
                 mask = mask.to(self.device)
                 optimizer.zero_grad()
                 lengths = lengths.to(dtype=torch.int64).to(device='cpu')
-                predictions = self.model(batch_input, lengths, mask)
-                loss = self.ce(predictions, batch_target)
-                epoch_loss += loss.item()
+                max_len = torch.max(lengths).item()
+                all_predictions = []
+                for pos in range(args.starting_point,max_len):
+                    cur_features = batch_input[:,:pos+1,:]
+                    tmp_lengths = torch.tensor([min([pos+1,cur_sur_len.item()]) for cur_sur_len in lengths])
+                    predictions = self.model(cur_features, tmp_lengths, mask)
+                    all_predictions.append(predictions)
+                tmp_predictions = [[x[i] for x in all_predictions] for i in range(len(all_predictions[0]))]
+                all_predictions = [torch.stack(predictions_task).permute(1, 2, 0) for predictions_task in tmp_predictions]
+                loss=0
+                total_batch_acc = []
+                for task_pred,targets in zip(all_predictions,batch_target.permute(2,0,1)):
+                    loss += self.ce(task_pred, targets[:,args.starting_point:])
+                    _, task_predictions = torch.max(task_pred, 1)
+                    task_acc = 0
+                    for sur_num, l in enumerate(lengths):
+                        task_acc += (targets[sur_num, args.starting_point:l] == task_predictions[sur_num,:l-args.starting_point]).sum().item() / l
+                    total_batch_acc.append(task_acc)
+                # loss = self.ce(predictions, batch_target)
                 loss.backward()
                 optimizer.step()
-                _, predicted = torch.max(predictions, 1)
-                acc = (predicted==batch_target).sum()
-                # acc = np.mean([np.mean([batch_target[j][i] == predicted[j][i] for i in range(lengths[j])]) for j in
-                       # range(len(lengths))])
-                mean_epoch_acc +=acc.item()
+                epoch_loss += loss.item()
+                # for sur_num, l in enumerate(lengths):
+                #     total_batch_acc += (batch_target[sur_num, :l] == predicted[sur_num, :l]).sum().item() / l
+                    # acc = (predicted==batch_target).sum()
+                mean_epoch_acc +=np.mean(total_batch_acc)
             # pbar.close()
             train_loss = epoch_loss / number_of_batches
             mean_acc = mean_epoch_acc/number_of_seqs
@@ -77,143 +94,89 @@ class Trainer:
                                   # f"train acc = {epoch_acc}, train F1 = {epoch_F1}")
             train_results = {"epoch": epoch, "train loss": train_loss,
                              "train acc": mean_acc}
-            results = self.eval(test_data_loader)
-            print(f'Val acc: {results["val acc"]}, val loss:{results["val loss"]}')
-            if results['val acc'] > best_results['val acc'] + 5e-3:
-                best_results['val acc'] = results['val acc']
-                best_results['epoch acc'] = epoch
-            if results['val loss'] < best_results['val loss'] + 5e-3:
-                best_results['val loss'] = results['val loss']
-                best_results['epoch loss'] = epoch
+            # results = self.eval(val_data_loader,features_type=args.features)
+            test_results = self.eval(test_data_loader,starting_point=args.starting_point,name='test',features_type =args.features)
+            test_results['epoch'] = epoch
+            # print(f'Val acc: {results["val acc"]}, val loss:{results["val loss"]}')
+            # if results['val acc'] > best_results['val acc']:
+            #     best_results['val acc'] = results['val acc']
+            #     best_results['epoch acc'] = epoch
+            #     best_results['test acc for best val'] = test_results['test acc']
+            # if results['val loss'] < best_results['val loss'] - 5e-3:
+            #     best_results['val loss'] = results['val loss']
+            #     best_results['epoch loss'] = epoch
             wandb.log(train_results)
-            if train_loss < min_train_loss - 5e-3:
+            wandb.log(test_results)
+            # wandb.log(results)
+            if train_loss<min_train_loss-5e-3:
                 steps_no_improve=0
-                min_train_loss=train_loss
             else:
                 steps_no_improve+=1
+            if train_loss < min_train_loss:
+                min_train_loss=train_loss
             if steps_no_improve>=self.early_stop:
                 break
-            # train_results_list.append(train_results)
-        #     if (epoch + 1) % eval_rate == 0:
-        #         print("epoch: " + str(epoch + 1) + " model evaluation")
-        #         results = {"epoch": epoch}
-        #         results.update(self.eval(test_data_loader))
-        #         eval_results_list.append(results)
-        #         print(f"\n  [epoch {epoch + 1}: val acc = {results['val acc']}, val F1 = {results['val F1']}")
-        #         wandb.log(results)
-        #         if results['val acc'] > best_results['val acc'] + 5e-3:
-        #             best_results['val acc'] = results['val acc']
-        #             best_results['epoch acc'] = epoch
-        #         if results['val F1'] > best_results['val F1'] + 5e-3:
-        #             best_results['val F1'] = results['val F1']
-        #             best_results['epoch F1'] = epoch
-        #             torch.save({"model_state": self.model.state_dict()}, f'{wandb.run.dir}/best_f1.pth') #save model with best Val F1
-        #
-            # if results['val loss'] > best_results['val loss'] + 1e-2:
-            #     best_F1 = epoch_F1
-            #     steps_no_improve = 0
-            # else:
-            #     steps_no_improve += 1
-            #     if steps_no_improve >= early_stop:
-            #         break
         wandb.log({f'best_{k}': v for k, v in best_results.items()}) #log best results
         wandb.finish()
         print(best_results)
         # return train_results_list,eval_results_list
     #
-    # def eval_notforced(self, test_data_loader,name='val'):
-    #     results = {}
-    #     self.model.eval()
-    #     all_preds = []
-    #     all_labels = []
-    #     epoch_loss=0
-    #     mean_epoch_acc=0
-    #     loss = 0
-    #     with torch.no_grad():
-    #         # self.model.to(self.device)
-    #         for batch in tqdm.tqdm(test_data_loader):
-    #             batch_input, batch_target, lengths, mask = [x.to(self.device) for x in batch]
-    #             lengths = lengths.to(dtype=torch.int64).to(device='cpu')
-    #             sur_accs = torch.tensor([0] * len(lengths))
-    #             batch_predicted_input = batch_input[:,0, :]
-    #             first_predictions = self.model(batch_predicted_input, [1] * len(lengths), mask[:, :1, :])
-    #             target = batch_target[:, 0]
-    #             _, predicted = torch.max(last_pred, dim=1)
-    #             sur_accs[lengths > i] += predicted == target
-    #             loss += self.ce(first_predictions, target)
-    #             for i in range(1,max(lengths)):
-    #                 features = [torch.tensor([0.] * state + [1.] + [0.] * (24 - state)) for state in predicted[lengths>i]]
-    #                 # batch_predicted_input = torch.stack(batch_predicted_input[length>i,:,:], features)
-    #                 batch_samp = batch_input[lengths > i, :i + 1, :]
-    #                 mask_samp = mask[lengths > i, :i + 1, :]
-    #                 predictions = self.model(batch_samp, [i+1]*sum(lengths>i).item(), mask_samp)
-    #                 target = batch_target[lengths > i,i]
-    #                 last_pred= predictions[:,-1,:]
-    #                 _,predicted = torch.max(last_pred,dim=1)
-    #                 sur_accs[lengths>i] += predicted==target
-    #                 loss += self.ce(last_pred,target)
-    #             epoch_loss += loss.item()
-    #             acc = np.mean([sur_accs[i]/lengths[i] for i in range(len(lengths))])
-    #             mean_epoch_acc +=acc
-    #         results[f'{name} acc'] = (mean_epoch_acc/len(test_data_loader)).item()
-    #         results[f'{name} loss'] = epoch_loss/len(test_data_loader)
-    #     self.model.train()
-    #     return results
-    # #
-    # def eval(self, test_data_loader,name='val'):
-    #     results = {}
-    #     self.model.eval()
-    #     all_preds = []
-    #     all_labels = []
-    #     epoch_loss=0
-    #     mean_epoch_acc=0
-    #     loss = 0
-    #     with torch.no_grad():
-    #         # self.model.to(self.device)
-    #         for batch in test_data_loader:
-    #             batch_input, batch_target, lengths, mask,_ = batch
-    #             lengths = lengths.to(dtype=torch.int64).to(device='cpu')
-    #             sur_accs = torch.tensor([0] * len(lengths))
-    #             for i in range(max(lengths)):
-    #                 batch_samp = batch_input[lengths > i, :i + 1, :]
-    #                 mask_samp = mask[lengths > i, :i + 1, :]
-    #                 predictions = self.model(batch_samp, [i+1]*sum(lengths>i).item(), mask_samp)
-    #                 target = batch_target[lengths > i,i]
-    #                 last_pred= predictions[:,-1,:]
-    #                 _,predicted = torch.max(last_pred,dim=1)
-    #                 sur_accs[lengths>i] += predicted==target
-    #                 loss += self.ce(last_pred,target)
-    #             epoch_loss += loss.item()
-    #             acc = np.mean([sur_accs[i]/lengths[i] for i in range(len(lengths))])
-    #             mean_epoch_acc +=acc
-    #         results[f'{name} acc'] = mean_epoch_acc/len(test_data_loader)
-    #         results[f'{name} loss'] = epoch_loss/len(test_data_loader)
-    #     self.model.train()
-    #     return results
 
-    def eval(self, test_data_loader,name='val'):
+    def eval(self, test_data_loader,features_type,starting_point,name='val'):
         results = {}
         self.model.eval()
-        all_preds = []
-        all_labels = []
-        epoch_loss=0
-        mean_epoch_acc=0
-        loss = 0
+        num_s = 5 if name=='test' else 6
         with torch.no_grad():
-            # self.model.to(self.device)
-            number_of_seqs = len(test_data_loader.sampler)
-            for batch in test_data_loader:
-                batch_input, batch_target, lengths, mask = [x.to(self.device) for x in batch]
-                lengths = lengths.to(dtype=torch.int64).to(device='cpu')
-                predictions = self.model(batch_input, lengths, mask)
-                loss = self.ce(predictions, batch_target)
-                epoch_loss += loss.item()
-                _, predicted = torch.max(predictions, 1)
-                acc = (predicted == batch_target).sum()
-                mean_epoch_acc +=acc.item()
-                epoch_loss += loss.item()
-            results[f'{name} acc'] = mean_epoch_acc/number_of_seqs
-            results[f'{name} loss'] = epoch_loss/len(test_data_loader)
+            epoch_loss = 0
+            mean_epoch_acc = 0
+            total_batch_acc= []
+            for surgery in tqdm.tqdm(test_data_loader):
+                sur_accuracy = 0
+                sur_predictions = []
+                sur_logits = []
+                sur_input, sur_target = [x.to(self.device) for x in surgery[:-1]]
+                sur_input = sur_input.squeeze(0)
+                sur_target = sur_target.squeeze(0)
+                num_features = sur_input.shape[1]
+                idx_add_features = (25 if features_type=='1hot' else 1 if features_type=='label' else 2)-num_features
+                cur_features = sur_input[:starting_point+1,:]
+                model_logits = self.model(cur_features.unsqueeze(0), [1])
+                preds = [torch.max(x, 1)[1] for x in model_logits]
+                # pred = preds[0].item()
+                sur_predictions.append(preds)
+                sur_logits.append(model_logits)
+                for pos,features in enumerate(sur_input[starting_point+1:]):
+                    if features_type=='1hot':
+                        pred= pred[0].items()
+                        pred_features =torch.tensor([0.] * pred + [1.] + [0.] * (24 - pred)).to(self.device)
+                    elif features_type=='label':
+                        pred = pred[0].item()
+                        pred_features =torch.tensor([pred]).to(self.device)
+                    else:
+                        pred_features =torch.tensor(preds).to(self.device)
+                    if idx_add_features<0:
+                        pred_features = torch.concat((pred_features,features[idx_add_features:]))
+                    pred_features = pred_features.unsqueeze(0)
+                    cur_features = torch.concat((cur_features,pred_features))
+                    model_logits = self.model(cur_features.unsqueeze(0), [pos+2])
+                    preds = [torch.max(x, 1)[1] for x in model_logits]
+                    sur_predictions.append(preds)
+                    sur_logits.append(model_logits)
+                tmp_logits = [[x[i] for x in sur_logits] for i in range(len(sur_logits[0]))]
+                all_logits = [torch.stack(predictions_task).float() for predictions_task in tmp_logits]
+                tmp_preds = [[x[i] for x in sur_predictions] for i in range(len(sur_predictions[0]))]
+                all_preds = [torch.stack(predictions_task).float() for predictions_task in tmp_preds]
+                sur_loss= 0
+                total_sur_acc = []
+                for task_logit,task_pred,targets in zip(all_logits,all_preds,sur_target.permute(1,0)):
+                    targets = targets[starting_point:]
+                    sur_loss += self.ce(task_logit.squeeze(), targets)
+                    total_sur_acc.append((targets == task_pred.squeeze()).sum().item()/targets.shape[0])
+                epoch_loss += sur_loss.item()
+                mean_epoch_acc += np.mean(total_sur_acc)
+        results[f'{name} acc'] = mean_epoch_acc.item()/num_s
+        results[f'{name} loss'] = epoch_loss/num_s
+
         self.model.train()
         return results
 
