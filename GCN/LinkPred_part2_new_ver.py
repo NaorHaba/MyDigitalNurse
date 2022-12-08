@@ -264,16 +264,8 @@ if __name__ == "__main__":
     wandb.init(project=args.Project, entity="surgical_data_science", mode=args.wandb_mode)  # logging to wandb
     wandb.config.update(args)
     train_data,test_data, unk_node = datasets_for_part_2(args)
-    # full_dataset, val_labels, test_labels = datasets_for_part_2(args)
     train_samples =list(train_data.keys())
-    # model = Net_with_embedding(dataset=None,args=args) if args.embedding_model=='torch' else Net(dataset=None,args=args)
     model = Net(dataset=None,args=args)
-    # model = MLP(dataset=None,args=args)
-    # total_params = sum(p.numel() for p in model.parameters())
-    # print(f'{total_params:,} total parameters.')
-    # total_trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    # print(f'{total_trainable_params:,} training parameters.')
-    # print(model)
     model.load_state_dict(torch.load(os.path.join(args.files_dir,args.model)))
     trainer = Train_next_step_pred(model,optimizer=None,args=args,train_data=train_data,unk_node=unk_node,
                                    with_scheduler=args.with_scheduler)
