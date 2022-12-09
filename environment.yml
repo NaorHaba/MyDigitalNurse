@@ -1,0 +1,15 @@
+name: MDN_env
+channels:
+  - defaults
+  - conda-forge
+  - pytorch
+dependencies:
+  - numpy
+  - jupyter
+  - torchaudio
+  - pytorch
+  - torchvision
+  - cudatoolkit=11.3
+  - transformers
+  - wandb
+prefix: /data/home/naor-haba/miniconda3/envs/MDN_env

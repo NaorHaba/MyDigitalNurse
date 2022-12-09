@@ -122,6 +122,7 @@ tokenizers = {
     "patch": PatchTokenizer,
     "pixel": PixelTokenizer,
     "token": TokenTokenizer,
+    "identity": nn.Identity,
 }
 
 

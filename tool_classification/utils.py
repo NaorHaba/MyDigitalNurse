@@ -1,6 +1,8 @@
 import torch
 from typing import NamedTuple, Tuple
 
+from torch import nn
+
 
 class ModelData(NamedTuple):
     surgeries_data: torch.Tensor
@@ -8,41 +10,40 @@ class ModelData(NamedTuple):
 
 
 SURGERY_GROUPS = {
-    'train': [
-        'P219_D_N.Camera1',
-        'P171_E_N.Camera1',
-        'P191_J_Y.Camera1',
-        'P183_D_N.Camera1',
-        'P001_G_N.Camera1',
-        'P045_E_Y.Camera1',
-        'P203_I_N.Camera1',
-        'P135_F_N.Camera1',
-        'P048_E_Y.Camera1',
-        'P051_J_N.Camera1',
-        'P206_C_N.Camera1',
-        'P116_C_N.Camera1',
-        'P047_J_Y.Camera1',
-        'P008_C_N.Camera1',
-        'P224_F_N.Camera1',
-        'P004_H_Y.Camera1',
-        'P134_H_N.Camera1',
-        'P120_E_Y.Camera1',
-    ],  # 19
-    'val': [
-        'P228_D_N.Camera1',
-        'P017_A_Y.Camera1',
-        'P003_C_Y.Camera1',
-        'P032_J_N.Camera1',
-        'P140_B_N.Camera1',
-    ],  # 5
-    'test': [
-        'P209_D_Y.Camera1_new',
-        'P201_G_N.Camera1',
-        'P030_A_N.Camera1',
-        'P033_C_Y.Camera1',
-        'P133_A_Y.Camera1',
-        'P130_D_N.Camera1',
-    ]  # 6
+    'train':
+        ['P193_D_N',
+         'P122_H_N',
+         'P117_A_N',
+         'P152_F_N',
+         'P137_J_Y',
+         'P011_E_Y',
+         'P027_I_Y',
+         'P024_E_Y',
+         'P153_E_N',
+         'P163_B_Y',
+         'P102_J_N',
+         'P041_E_Y',
+         'P167_I_N',
+         'P129_E_N',
+         'P191_J_Y',
+         'P016_D_N',
+         'P114_H_Y',
+         'P095_A_Y',
+         'P131_B_N',
+         'P172_A_N'],
+    'val':
+        ['P126_B_Y',
+         'P100_D_Y',
+         'P030_A_N',
+         'P058_H_N',
+         'P014_G_N',
+         'P038_H_N'],
+    'test':
+        ['P019_E_Y',
+         'P107_J_Y',
+         'P009_A_Y',
+         'P112_B_N',
+         'P015_I_N']
 }
 
 LABEL_ID_TO_NAME = {
@@ -90,3 +91,8 @@ LABEL_INFO_TO_ID = {
     'assistant_R_4': 18,
     'assistant_L_4': 19
 }
+
+ACTIVATIONS = {'tanh': nn.Tanh, 'relu': nn.ReLU, 'lrelu': nn.LeakyReLU, 'gelu': nn.GELU,
+               'celu': nn.CELU, 'selu': nn.SELU, 'silu': nn.SiLU}
+
+OPTIMIZERS = {'adam': torch.optim.Adam, 'sgd': torch.optim.SGD, 'rmsprop': torch.optim.RMSprop}

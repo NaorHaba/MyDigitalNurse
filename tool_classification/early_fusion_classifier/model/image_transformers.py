@@ -6,6 +6,7 @@ import math
 import torch
 from torch import nn
 from torchvision.models.vision_transformer import Encoder
+from torchvision import models
 from typing import Optional, Callable, NamedTuple, Tuple, List
 
 from utils import ModelData
@@ -15,6 +16,25 @@ class MultiViewTransformer(ABC, nn.Module):
 
     def __init__(self):
         super().__init__()
+
+
+class MultiViewPretrainedResNet(MultiViewTransformer):
+    # use resnet101 as embedder
+
+    def __init__(self, embedding_dim, pretrained=True):
+        super().__init__()
+        self.encoder = models.resnet101(pretrained=pretrained)
+        self.encoder.fc = nn.Linear(2048, embedding_dim)
+
+    def forward(self, data: ModelData) -> ModelData:
+        top, side = data.surgeries_data[0], data.surgeries_data[1]
+        top = self.encoder(top)
+        side = self.encoder(side)
+
+        # sum pooling
+        x = torch.stack((top, side), dim=1).sum(dim=1)
+
+        return ModelData(x, data.lengths)
 
 
 class EncoderParameters(NamedTuple):
@@ -54,7 +74,7 @@ class LocalGlobalTransformer(MultiViewTransformer):
         self.image_w = image_w
         self.patch_size = patch_size
 
-        seq_length = (image_h // patch_size) * (image_w // patch_size) + 1  # +1 for the classifier token
+        seq_length = (image_h // patch_size) * (image_w // patch_size) + 1  # +1 for the early_fusion_classifier token
 
         self.top_encoder = Encoder(
             seq_length,
@@ -76,7 +96,7 @@ class LocalGlobalTransformer(MultiViewTransformer):
         top_len = top.shape[1]
         x = self.global_encoder(torch.cat([self.top_encoder(top), self.side_encoder(side)], dim=1))
 
-        # Sum-pooling over classifier "token" from each view
+        # Sum-pooling over early_fusion_classifier "token" from each view
         x = x[:, [0, top_len]].sum(dim=1)
 
         return ModelData(

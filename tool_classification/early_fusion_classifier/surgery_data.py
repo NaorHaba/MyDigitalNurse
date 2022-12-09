@@ -22,6 +22,7 @@ class SurgeryData:
         side_frames = set(['_'.join(f.split('_')[:-1]) for f in side_frames])
 
         return top_frames, side_frames
+
     def parse_surgery_image_frames(self):
         images_dir = os.path.join(self.surgery_dir, 'images')
         top_frames, side_frames = self.get_frames_from_dir(images_dir)
