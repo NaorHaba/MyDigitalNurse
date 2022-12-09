@@ -1,4 +1,4 @@
-# MyDigitalNurse
+# Tool-Classification
  
 Here you can find the code I used to research a tool classification model using 2 different approaches, Early Fusion and Late Fusion.
 
